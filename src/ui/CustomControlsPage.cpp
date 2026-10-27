@@ -1,7 +1,9 @@
 #include "ui/CustomControlsPage.h"
 #include "engine/Models.h"
 #include "ui/MidiRemoteUi.h"
+#include "ui/TapTempo.h"
 #include "ui/UsbRecorderPage.h"
+#include "ui/ViewPages.h"
 #include "ui/WingPopups.h"
 
 namespace livedaw::ui::cc
@@ -31,10 +33,67 @@ namespace
                                         "FADER LAYER", "MUTE GROUPS", "WING LIVE", "CUSTOM CONTROLS", "MONITOR" };
     constexpr int kNumGlobalPages = 14;
     const char* const showControls[] = { "SCENE GO", "PREV", "NEXT", "GO PREV", "GO NEXT" };
-    const char* const otherNames[] = { "MONITOR DIM", "MONITOR MONO", "MONITOR SWAP", "MONITOR MUTE", "FADER -oo", "FADER -10 dB", "FADER 0 dB",
-                                       "AUTOMIX X", "AUTOMIX Y", "CHANNEL PREV", "CHANNEL NEXT", "CC BANK UP", "CC BANK DOWN", "SOF OFF" };
-    constexpr int kNumOthers = 14;
-    const char* const monitorNames[] = { "MONITOR LEVEL", "DIM AMOUNT" };
+    // OTHER, by code (OtherFunction; WING Edit's names).
+    const char* const otherNames[] = { "MONITOR DIM",      "MONITOR MONO",   "MONITOR SWAP",    "MONITOR MUTE",   "FADER -oo",
+                                       "FADER -10 dB",     "FADER 0 dB",     "AUTOMIX X",       "AUTOMIX Y",      "CHANNEL PREV",
+                                       "CHANNEL NEXT",     "CC BANK UP",     "CC BANK DOWN",    "SOF OFF",        "TALKBACK A",
+                                       "TALKBACK B",       "GLOBAL MAIN/ALT", "DAW LAYER",      "MONITOR PHONES", "MONITOR SPEAKERS",
+                                       "MONITOR PH+SPK",   "CH SOLO TAP",    "BUS SOLO TAP",    "MAIN SOLO TAP",  "MTX SOLO TAP",
+                                       "CH METER TAP",     "BUS METER TAP",  "MAIN METER TAP",  "MTX METER TAP",  "DCA METER TAP" };
+    constexpr int kNumOthers = kNumOtherFunctions;
+    static_assert (std::size (otherNames) == kNumOthers);
+    // MONITORING (encoders): MONITOR LEVEL (the speakers), DIM AMOUNT, PHONES LEVEL.
+    const char* const monitorNames[] = { "MONITOR LEVEL", "DIM AMOUNT", "PHONES LEVEL" };
+    constexpr int kNumMonitorFunctions = 3;
+    // OVERVIEW PAGE's areas (the WING's L, C, R, CMPCT, RCK, EXT, VRT).
+    const char* const areaNames[kNumOverviewAreas] = { "LEFT", "CENTER", "RIGHT", "COMPACT", "RACK", "EXTENDER", "VIRTUAL" };
+
+    /** The strip types of the SOLO TAP and METER TAP keys (METER TAP's fifth is the DCAs). */
+    constexpr StripKind tapKinds[] = { StripKind::Channel, StripKind::Bus, StripKind::Main, StripKind::Matrix };
+
+    /** FX PAR on a key: the parameter (-1: the slot's MIX), or nullptr. */
+    const models::Param* fxParamOf (UiContext& ctx, int slot, int param)
+    {
+        if (! juce::isPositiveAndBelow (slot, kNumFx) || param < 0)
+            return nullptr;
+        const auto& spec = models::model (models::Fx, ctx.engine.getFx().getModel (slot));
+        return juce::isPositiveAndBelow (param, (int) spec.params.size()) ? &spec.params[(size_t) param] : nullptr;
+    }
+
+    /** FX PARAMETER on an encoder, FX PAR on a held key: the slot's MIX or parameter. */
+    KnobBinding bindFxParameter (UiContext& ctx, int slot, int param)
+    {
+        if (! juce::isPositiveAndBelow (slot, kNumFx))
+            return {};
+        auto& fx = ctx.engine.getFx();
+        if (param < 0)
+            return bindLinear ("FX MIX", fx.params (slot).mix, 0.0f, 100.0f, "%", 0, 100.0f);
+        if (const auto* p = fxParamOf (ctx, slot, param))
+            return bindModelParam (fx.params (slot).values[param], *p);
+        return {};
+    }
+
+    /** An FX PAR key on its slot's delay TIME taps the tempo (manual 5.5 p.
+        47, TAP TEMPO FLASH: "the TIME parameters of delay effects when
+        assigned to a CC button for Tap Tempo"). */
+    bool isTapKey (UiContext& ctx, const Function& f)
+    {
+        return f.category == BtnFxParameter && juce::isPositiveAndBelow (f.target, kNumFx) && f.option >= 0
+               && TapTempo::timeParam (ctx.engine.getFx().getModel (f.target)) == f.option;
+    }
+
+    /** Per FX slot: the taps, and when its TIME last changed (TAP TEMPO FLASH 8X). */
+    struct TapState
+    {
+        TapTempo tempo;
+        float time = -1.0f;
+        double changedMs = -1.0e9;
+    };
+    TapState& tapState (int slot)
+    {
+        static std::array<TapState, kNumFx> states;
+        return states[(size_t) juce::jlimit (0, kNumFx - 1, slot)];
+    }
     // USB PLAY/REC: the USB recorder / player's keys (the option).
     const char* const usbNames[] = { "PLAY", "PAUSE", "STOP", "PREV", "NEXT", "REC", "REC PAUSE", "REC STOP", "NEW FILE", "REPEAT" };
     constexpr int kNumUsbFunctions = 10;
@@ -136,7 +195,10 @@ void Assignments::clearLayer (int layer)
 
 void Assignments::save()
 {
+    // Every control that has anything, nothing left to factory defaults; F1-F3
+    // play layers 1-3 (layout 2: custom.rs).
     juce::XmlElement xml ("CustomControls");
+    xml.setAttribute ("layout", 2);
     for (int l = 0; l < kNumStoredLayers; ++l)
         for (int i = 0; i < kNumControls; ++i)
         {
@@ -168,10 +230,54 @@ juce::String categoryName (Slot s, int category)
                                             "FX PARAMETER", "MONITORING", "DAW V-POTS", "MIDI CC" };
     static const char* const buttons[] = { "NOT ASSIGNED", "MUTE", "SOLO", "DCA MUTE", "MGRP", "SENDS ON FDR", "CH PAGE", "GLOBAL PAGE",
                                            "FADER PAGE", "SHOW CONTROL", "SCENE RECALL", "OTHER", "FADER SPILL", "DAW BUTTONS",
-                                           "MIDI CC/NOTE/PGM", "USB PLAY/REC", "SD RECORDER", "GPIO", "CC BANK" };
+                                           "MIDI CC/NOTE/PGM", "USB PLAY/REC", "SD RECORDER", "GPIO", "CC BANK",
+                                           "CH INSERT PRE ON/OFF", "CH INSERT POST ON/OFF", "FX PAR", "OVERVIEW PAGE" };
+    static_assert (std::size (buttons) == kNumButtonCategories);
     if (s == Slot::Encoder)
         return juce::isPositiveAndBelow (category, (int) std::size (encoders)) ? encoders[category] : "";
     return juce::isPositiveAndBelow (category, (int) std::size (buttons)) ? buttons[category] : "";
+}
+
+std::vector<int> categoryOrder (Slot s)
+{
+    // WING Edit 3.3's FUNCTION lists (its DAW V-POTS on a key, FADER START and
+    // the SD recorders' sessions and markers aren't here).
+    if (s == Slot::Encoder)
+        return { EncNone, EncFader, EncPan, EncDcaFader, EncSelBusSend, EncFixedBusSend, EncFxParameter, EncDawVpot, EncMonitoring, EncMidiCc };
+    return { BtnNone,        BtnMute,        BtnSolo,        BtnInsertPre,    BtnInsertPost, BtnMuteGroup,   BtnDcaMute,     BtnSendsOnFader,
+             BtnFaderSpill,  BtnFxParameter, BtnDawButtons,  BtnChannelPage,  BtnGlobalPage, BtnFaderPage,   BtnOverviewPage, BtnOther,
+             BtnCcBank,      BtnGpio,        BtnShowControl, BtnSceneRecall,  BtnMidi,       BtnUsbPlayer,   BtnSdRecorder };
+}
+
+const std::vector<int>& otherOrder()
+{
+    static const std::vector<int> order {
+        OtherTalkbackA,  OtherTalkbackB,    OtherGlobalMainAlt, OtherDawLayer,     OtherMonitorPhones, OtherMonitorSpeakers,
+        OtherMonitorPhonesSpeakers,         OtherMonitorDim,    OtherMonitorMono,  OtherMonitorSwap,   OtherMonitorMute,
+        OtherFaderOff,   OtherFaderMinus10, OtherFader0,        OtherAutomixX,     OtherAutomixY,      OtherChannelPrev,
+        OtherChannelNext, OtherChSoloTap,   OtherBusSoloTap,    OtherMainSoloTap,  OtherMtxSoloTap,    OtherChMeterTap,
+        OtherBusMeterTap, OtherMainMeterTap, OtherMtxMeterTap,  OtherDcaMeterTap,  OtherCcBankUp,      OtherCcBankDown,
+        OtherSofOff,
+    };
+    jassert (order.size() == (size_t) kNumOtherFunctions);
+    return order;
+}
+
+LayerSet::Section overviewSection (int area) noexcept
+{
+    // L, C, R, CMPCT (the COMPACT's fader section: the left), RCK, EXT, VRT.
+    switch (area)
+    {
+        case 1:  return LayerSet::Center;
+        case 2:  return LayerSet::Right;
+        case 6:  return LayerSet::kVirtualSection;
+        default: return LayerSet::Left;
+    }
+}
+
+int tapTempoFlash (UiContext& ctx)
+{
+    return juce::jlimit (0, 2, ctx.settings.getIntValue (uiprefs::tapTempoFlash, 2));
 }
 
 bool categoryAvailable (Slot s, int category)
@@ -200,6 +306,7 @@ juce::Colour categoryColour (Slot s, int category)
     {
         case BtnSendsOnFader: return salmon;
         case BtnFaderSpill:   return spillRed;
+        case BtnFxParameter:  return fxMagenta;
         case BtnDawButtons:   return dawGold;
         default:              return juce::Colours::black;
     }
@@ -247,18 +354,10 @@ KnobBinding bindEncoder (UiContext& ctx, const Function& f)
             if (auto* s = stripOf (ctx, f.target); s != nullptr && (s->isInput() || s->isBus()) && f.option >= 0)
                 return bindFader ("BUS " + juce::String (f.option + 1), s->sends[(size_t) f.option].levelDb);
             break;
-        case EncFxParameter:
-            if (juce::isPositiveAndBelow (f.target, kNumFx))
-            {
-                auto& fx = ctx.engine.getFx();
-                if (f.option < 0)
-                    return bindLinear ("FX MIX", fx.params (f.target).mix, 0.0f, 100.0f, "%", 0, 100.0f);
-                const auto& spec = models::model (models::Fx, fx.getModel (f.target));
-                if (juce::isPositiveAndBelow (f.option, (int) spec.params.size()))
-                    return bindModelParam (fx.params (f.target).values[f.option], spec.params[(size_t) f.option]);
-            }
-            break;
+        case EncFxParameter: return bindFxParameter (ctx, f.target, f.option);
         case EncMonitoring:
+            if (f.option == 2)
+                return bindLinear ("PHONES", ctx.engine.phones.levelDb, -60.0f, 10.0f, " dB", 1, 0.0f);
             return f.option == 1 ? bindLinear ("DIM", ctx.engine.monitorDimDb, 0.0f, 40.0f, " dB", 0, 20.0f)
                                  : bindLinear ("MONITOR", ctx.engine.monitorLevelDb, -60.0f, 10.0f, " dB", 1, 0.0f);
         case EncDawVpot:
@@ -273,11 +372,48 @@ KnobBinding bindEncoder (UiContext& ctx, const Function& f)
     return {};
 }
 
+KnobBinding bindHeldKey (UiContext& ctx, const Function& f)
+{
+    if (f.category == BtnFxParameter)
+        return bindFxParameter (ctx, f.target, f.option);
+    return {};
+}
+
 void press (UiContext& ctx, const Function& f)
 {
     auto flip = [] (std::atomic<bool>& b) { b = ! b.load(); };
     switch (f.category)
     {
+        case BtnInsertPre:
+        case BtnInsertPost:
+            // The strip's INS 1 / INS 2 on or off (HOME's insert key).
+            if (auto* s = stripOf (ctx, f.target); s != nullptr && (f.category == BtnInsertPre || s->hasPostInsert()))
+                flip (f.category == BtnInsertPre ? s->params.preInsert.on : s->params.postInsert.on);
+            break;
+        case BtnFxParameter:
+        {
+            if (isTapKey (ctx, f))
+            {
+                // A delay's TIME: the time between two taps (0.1 to 3 s), as the blank key.
+                if (const auto interval = tapState (f.target).tempo.tap (juce::Time::getMillisecondCounterHiRes()))
+                    if (const auto* p = fxParamOf (ctx, f.target, f.option))
+                        ctx.engine.getFx().params (f.target).values[f.option].store (juce::jlimit (p->min, p->max, *interval));
+                break;
+            }
+            // A switch toggles, a list steps on (round); a continuous
+            // parameter is set with the encoder while the key is held.
+            if (const auto* p = fxParamOf (ctx, f.target, f.option); p != nullptr && p->isStepped())
+            {
+                auto& v = ctx.engine.getFx().params (f.target).values[f.option];
+                const float next = std::round (v.load()) + 1.0f;
+                v.store (next > p->max ? p->min : next);
+            }
+            break;
+        }
+        case BtnOverviewPage:
+            if (ctx.showOverviewPage)
+                ctx.showOverviewPage (juce::jlimit (0, kNumOverviewAreas - 1, f.target), juce::jmax (0, f.option));
+            break;
         case BtnMute:
             if (auto* s = stripOf (ctx, f.target))
                 flip (s->params.mute);
@@ -389,6 +525,42 @@ void press (UiContext& ctx, const Function& f)
                     if (ctx.sofChanged)
                         ctx.sofChanged();
                     break;
+                // TALKBACK A / B: as the TALK keys (their SWITCH MODE; released in release()).
+                case OtherTalkbackA:
+                case OtherTalkbackB: ctx.engine.talkKey (f.option - OtherTalkbackA, true); break;
+                // The global MAIN / ALT input switch (manual 5.5 p. 44: "can also be assigned to a CC button").
+                case OtherGlobalMainAlt: ctx.engine.setGlobalAlt (! ctx.engine.isGlobalAlt()); break;
+                // DAW LAYER: DAW remote control on / off, as the full-size WING's DAW key (manual
+                // 4.8 p. 27: on the COMPACT and RACK the only way in); without DAW CONTROL the editor.
+                case OtherDawLayer:
+                    if (! midiui::pressDawKey (ctx) && ctx.showEditor)
+                        ctx.showEditor (true);
+                    break;
+                // The monitoring path the monitor keys act on (the MONITORS keys).
+                case OtherMonitorPhones:
+                case OtherMonitorSpeakers:
+                case OtherMonitorPhonesSpeakers: ctx.engine.setSoloBus (f.option - OtherMonitorPhones); break;
+                case OtherChSoloTap:
+                case OtherBusSoloTap:
+                case OtherMainSoloTap:
+                case OtherMtxSoloTap:
+                {
+                    // PFL / AFL of the strip type (SETUP > AUDIO > SOLO SYSTEM).
+                    const auto kind = tapKinds[f.option - OtherChSoloTap];
+                    ctx.engine.setSoloAfl (kind, ! ctx.engine.isSoloAfl (kind));
+                    break;
+                }
+                case OtherChMeterTap:
+                case OtherBusMeterTap:
+                case OtherMainMeterTap:
+                case OtherMtxMeterTap:
+                case OtherDcaMeterTap:
+                {
+                    // PRE / POST of the strip type's meters (SETUP > SURFACE > METERING).
+                    const int i = f.option - OtherChMeterTap;
+                    ctx.settings.setValue (prefs::meterTapKey (i), ! prefs::meterTapPre (ctx, i));
+                    break;
+                }
                 default: break;
             }
             break;
@@ -435,12 +607,34 @@ void release (UiContext& ctx, const Function& f)
         midiui::pressDawCommand (ctx, f.option, false);
     else if (f.category == BtnMidi)
         midiui::pressMidiKey (ctx, f.target, f.option, false);
+    else if (f.category == BtnOther && (f.option == OtherTalkbackA || f.option == OtherTalkbackB))
+        ctx.engine.talkKey (f.option - OtherTalkbackA, false);
 }
 
 int ledState (UiContext& ctx, const Function& f)
 {
     if (f.category == BtnDawButtons)
         return midiui::dawCommandLed (ctx, f.option);
+    if (isTapKey (ctx, f))
+    {
+        // TAP TEMPO FLASH: OFF dark, 8X eight beats after the TIME changed
+        // (a tap, a knob), ON always; the key flashes with the tempo.
+        const int flash = tapTempoFlash (ctx);
+        if (flash == 0)
+            return 0;
+        auto& state = tapState (f.target);
+        const float time = ctx.engine.getFx().params (f.target).values[f.option].load();
+        const double now = juce::Time::getMillisecondCounterHiRes();
+        if (time != state.time)
+        {
+            if (state.time >= 0.0f)
+                state.changedMs = now;
+            state.time = time;
+        }
+        if (flash == 1 && now - state.changedMs > 8.0 * (double) juce::jmax (1.0f, time))
+            return 0;
+        return state.tempo.ledLit (now, time) ? 1 : 0;
+    }
     return isLit (ctx, f) ? 1 : 0;
 }
 
@@ -457,8 +651,8 @@ juce::String layerName (int layer)
     }
     if (layer >= kFirstDawLayer)
         return "DAW " + juce::String (layer - kFirstDawLayer + 1);
-    if (layer >= kFirstFourChannelLayer)
-        return "U" + juce::String (layer - kFirstFourChannelLayer + 1);
+    if (layer >= kLegacyFourChannelLayer)
+        return "F" + juce::String (layer - kLegacyFourChannelLayer + 1) + " (OLD)";
     return "LAYER " + juce::String (layer + 1);
 }
 
@@ -488,6 +682,20 @@ bool isLit (UiContext& ctx, const Function& f)
             break;
         case BtnDawButtons: return midiui::dawCommandLed (ctx, f.option) != 0;
         case BtnMidi: return midiui::midiKeyLit (ctx, f.target, f.option);
+        case BtnInsertPre:
+            if (auto* s = stripOf (ctx, f.target))
+                return s->params.preInsert.on.load();
+            break;
+        case BtnInsertPost:
+            if (auto* s = stripOf (ctx, f.target))
+                return s->hasPostInsert() && s->params.postInsert.on.load();
+            break;
+        case BtnFxParameter:
+            // A switch shows its state; the other parameters have none.
+            if (const auto* p = fxParamOf (ctx, f.target, f.option); p != nullptr && p->kind == models::ParamKind::Toggle)
+                return ctx.engine.getFx().params (f.target).values[f.option].load() >= 0.5f;
+            break;
+        case BtnOverviewPage: return ctx.getScreen && ctx.getScreen() == Screen::Overview;
         case BtnOther:
             switch (f.option)
             {
@@ -497,6 +705,23 @@ bool isLit (UiContext& ctx, const Function& f)
                 case 3: return ctx.engine.monitorMute.load();
                 case 7: return ctx.engine.automixEnable[0].load();
                 case 8: return ctx.engine.automixEnable[1].load();
+                case OtherTalkbackA:
+                case OtherTalkbackB: return ctx.engine.isTalkOn (f.option - OtherTalkbackA);
+                case OtherGlobalMainAlt: return ctx.engine.isGlobalAlt();
+                case OtherDawLayer: return midiui::dawModeOn (ctx);
+                case OtherMonitorPhones:
+                case OtherMonitorSpeakers:
+                case OtherMonitorPhonesSpeakers: return ctx.engine.soloBus.load() == f.option - OtherMonitorPhones;
+                // Lit for AFL / POST (the tap after the fader).
+                case OtherChSoloTap:
+                case OtherBusSoloTap:
+                case OtherMainSoloTap:
+                case OtherMtxSoloTap: return ctx.engine.isSoloAfl (tapKinds[f.option - OtherChSoloTap]);
+                case OtherChMeterTap:
+                case OtherBusMeterTap:
+                case OtherMainMeterTap:
+                case OtherMtxMeterTap:
+                case OtherDcaMeterTap: return ! prefs::meterTapPre (ctx, f.option - OtherChMeterTap);
                 default: return false;
             }
         case BtnUsbPlayer:
@@ -539,7 +764,7 @@ juce::String describe (UiContext& ctx, Slot s, const Function& f)
             case EncSelBusSend:   return "SEL>B" + juce::String (f.target + 1);
             case EncFixedBusSend: return strip() + ">B" + juce::String (f.option + 1);
             case EncFxParameter:  return "FX" + juce::String (f.target + 1) + (f.option < 0 ? " MIX" : " P" + juce::String (f.option + 1));
-            case EncMonitoring:   return monitorNames[juce::jlimit (0, 1, f.option)];
+            case EncMonitoring:   return monitorNames[juce::jlimit (0, kNumMonitorFunctions - 1, f.option)];
             case EncDawVpot:      return DawRemote::vpotFunctionName (f.target).replace ("V-POT ", "VPOT ").replace ("JOG WHEEL", "JOG");
             case EncMidiCc:       return midiui::describeMidiCc (f.target, f.option);
             default:              return categoryName (s, f.category);
@@ -571,6 +796,18 @@ juce::String describe (UiContext& ctx, Slot s, const Function& f)
         case BtnMidi:         return midiui::describeMidiKey (f.target, f.option);
         case BtnUsbPlayer:    return juce::String ("USB ") + usbNames[juce::jlimit (0, kNumUsbFunctions - 1, f.option)];
         case BtnCcBank:       return "CC BANK " + juce::String (f.option + 1);
+        case BtnInsertPre:    return strip() + " INS1";
+        case BtnInsertPost:   return strip() + " INS2";
+        case BtnFxParameter:
+        {
+            const auto* p = fxParamOf (ctx, f.target, f.option);
+            return "FX" + juce::String (f.target + 1) + " " + (p != nullptr ? p->label.toUpperCase() : juce::String (f.option < 0 ? "MIX" : "--"));
+        }
+        case BtnOverviewPage:
+        {
+            static const char* const areas[kNumOverviewAreas] = { "L", "C", "R", "CMPCT", "RCK", "EXT", "VRT" };
+            return juce::String ("VIEW ") + areas[juce::jlimit (0, kNumOverviewAreas - 1, f.target)] + " " + juce::String (f.option + 1);
+        }
         default:              return categoryName (s, f.category);
     }
 }
@@ -694,13 +931,17 @@ void CustomControlsPage::rebuildLists()
     fn.fills.clear();
     fn.enabled.clear();
     fn.bars.clear();
-    for (int i = 0; i < numCategories (slot); ++i)
+    categoryCodes = categoryOrder (slot);
+    fn.selected = -1;
+    for (size_t i = 0; i < categoryCodes.size(); ++i)
     {
-        fn.rows.add (categoryName (slot, i));
-        fn.fills.push_back (categoryColour (slot, i));
-        fn.enabled.push_back (categoryAvailable (slot, i));
+        const int category = categoryCodes[i];
+        fn.rows.add (categoryName (slot, category));
+        fn.fills.push_back (categoryColour (slot, category));
+        fn.enabled.push_back (categoryAvailable (slot, category));
+        if (category == f.category)
+            fn.selected = (int) i;
     }
-    fn.selected = f.category;
 
     // The target and option lists.
     for (int i = 1; i < 3; ++i)
@@ -717,13 +958,13 @@ void CustomControlsPage::rebuildLists()
     auto& targets = lists[1];
     auto& options = lists[2];
 
-    auto addStrips = [this, &targets] (bool inputsAndBuses)
+    auto addStrips = [this, &targets] (bool inputsAndBuses, bool withPostInsert = false)
     {
         targets.title = "CHANNEL";
         for (auto k : { StripKind::Channel, StripKind::Aux, StripKind::Bus, StripKind::Main, StripKind::Matrix })
             for (auto& s : ctx.engine.getStrips (k))
             {
-                if (inputsAndBuses && ! (s->isInput() || s->isBus()))
+                if ((inputsAndBuses && ! (s->isInput() || s->isBus())) || (withPostInsert && ! s->hasPostInsert()))
                     continue;
                 targets.rows.add (shortStripLabel (*s) + "\t" + (stripName (*s) != s->getLabel() ? stripName (*s).toUpperCase() : juce::String()));
                 targets.bars.push_back (stripDisplayColour (*s));
@@ -749,6 +990,32 @@ void CustomControlsPage::rebuildLists()
         }
     };
     const int buses = (int) ctx.engine.getBuses().size();
+    // FX PARAMETER (encoders), FX PAR (keys): the slot, then FX MIX and its device's parameters.
+    auto addFxParameters = [this, &targets, &options, &f]
+    {
+        targets.title = "EFFECT PROCESSOR";
+        for (int i = 0; i < kNumFx; ++i)
+        {
+            const auto& spec = models::model (models::Fx, ctx.engine.getFx().getModel (i));
+            targets.rows.add ("FX" + juce::String (i + 1) + "   " + spec.name.toUpperCase());
+            targetCodes.push_back (i);
+        }
+        options.title = "PARAMETER";
+        options.rows.add ("FX MIX");
+        optionCodes.push_back (-1);
+        if (juce::isPositiveAndBelow (f.target, kNumFx))
+        {
+            const int model = ctx.engine.getFx().getModel (f.target);
+            const auto& spec = models::model (models::Fx, model);
+            const int tapParam = slot == Slot::Encoder ? -1 : TapTempo::timeParam (model);
+            for (size_t i = 0; i < spec.params.size(); ++i)
+            {
+                // On a key, a delay's TIME taps the tempo.
+                options.rows.add (spec.params[i].label.toUpperCase() + ((int) i == tapParam ? " (TAP)" : ""));
+                optionCodes.push_back ((int) i);
+            }
+        }
+    };
 
     if (slot == Slot::Encoder)
     {
@@ -762,30 +1029,8 @@ void CustomControlsPage::rebuildLists()
                 addStrips (true);
                 addNumbered (options, optionCodes, "BUS", "BUS ", buses);
                 break;
-            case EncFxParameter:
-            {
-                targets.title = "EFFECT PROCESSOR";
-                for (int i = 0; i < kNumFx; ++i)
-                {
-                    const auto& spec = models::model (models::Fx, ctx.engine.getFx().getModel (i));
-                    targets.rows.add ("FX" + juce::String (i + 1) + "   " + spec.name.toUpperCase());
-                    targetCodes.push_back (i);
-                }
-                options.title = "PARAMETER";
-                options.rows.add ("FX MIX");
-                optionCodes.push_back (-1);
-                if (juce::isPositiveAndBelow (f.target, kNumFx))
-                {
-                    const auto& spec = models::model (models::Fx, ctx.engine.getFx().getModel (f.target));
-                    for (size_t i = 0; i < spec.params.size(); ++i)
-                    {
-                        options.rows.add (spec.params[i].label.toUpperCase());
-                        optionCodes.push_back ((int) i);
-                    }
-                }
-                break;
-            }
-            case EncMonitoring: addNames (options, optionCodes, "OTHER", monitorNames, 2); break;
+            case EncFxParameter: addFxParameters(); break;
+            case EncMonitoring: addNames (options, optionCodes, "OTHER", monitorNames, kNumMonitorFunctions); break;
             case EncDawVpot:
                 targets.title = "V-POT";
                 for (int i = 0; i < DawRemote::kNumVpotFunctions; ++i)
@@ -811,7 +1056,39 @@ void CustomControlsPage::rebuildLists()
         switch (f.category)
         {
             case BtnMute:
-            case BtnSolo: addStrips (false); break;
+            case BtnSolo:
+            case BtnInsertPre: addStrips (false); break;
+            case BtnInsertPost: addStrips (false, true); break; // aux channels have no INS 2
+            case BtnFxParameter: addFxParameters(); break;
+            case BtnOverviewPage:
+            {
+                // AREA (this console's: LEFT, CENTER, RIGHT or COMPACT, VIRTUAL),
+                // then the section's layer keys and its fixed banks.
+                targets.title = "AREA";
+                const bool compactConsole = ctx.consoleModel == ConsoleModel::Compact;
+                for (int i = 0; i < kNumOverviewAreas; ++i)
+                {
+                    targets.rows.add (areaNames[i]);
+                    targetCodes.push_back (i);
+                    targets.enabled.push_back (compactConsole ? (i == 3 || i == 6) : i < 3);
+                }
+                options.title = "BANK";
+                const auto section = overviewSection (f.target);
+                const auto keys = ctx.show.layers.getDefaultLayers (ctx.engine, section);
+                for (size_t i = 0; i < keys.size() && i < (size_t) kFirstOverviewBank; ++i)
+                {
+                    const auto label = LayerSet::keyLabel (keys[i]).replace ("\n", " ");
+                    options.rows.add (label.isNotEmpty() ? label : "LAYER " + juce::String ((int) i + 1));
+                    optionCodes.push_back ((int) i);
+                }
+                const auto banks = viewBanks (ctx);
+                for (size_t i = 0; i < banks.size(); ++i)
+                {
+                    options.rows.add (banks[i].title);
+                    optionCodes.push_back (kFirstOverviewBank + (int) i);
+                }
+                break;
+            }
             case BtnDcaMute: addNumbered (targets, targetCodes, "DCA", "DCA ", kNumDcas); break;
             case BtnMuteGroup:
                 targets.title = "MUTE GROUP";
@@ -860,7 +1137,15 @@ void CustomControlsPage::rebuildLists()
                     targetCodes.push_back (tag);
                 }
                 break;
-            case BtnOther: addNames (options, optionCodes, "OTHER", otherNames, kNumOthers); break;
+            case BtnOther:
+                // In WING Edit's order.
+                options.title = "OTHER";
+                for (int code : otherOrder())
+                {
+                    options.rows.add (otherNames[code]);
+                    optionCodes.push_back (code);
+                }
+                break;
             case BtnFaderSpill:
             {
                 // SPILL (kind), then which one: both set the target (the
@@ -1016,20 +1301,28 @@ void CustomControlsPage::choose (int list, int row)
     auto f = function();
     if (list == 0)
     {
-        if (! categoryAvailable (slot, row) || row == f.category)
+        if (! juce::isPositiveAndBelow (row, (int) categoryCodes.size()))
+            return;
+        const int category = categoryCodes[(size_t) row];
+        if (! categoryAvailable (slot, category) || category == f.category)
             return;
         // A new function: its first target and option.
-        f = { row, 0, 0 };
-        if (slot == Slot::Encoder && row == EncFixedBusSend)
+        f = { category, 0, 0 };
+        if (slot == Slot::Encoder && category == EncFixedBusSend)
             f.option = 0;
-        if (slot == Slot::Encoder && row == EncFxParameter)
+        if (category == (slot == Slot::Encoder ? (int) EncFxParameter : (int) BtnFxParameter))
             f.option = -1;
         store (f);
         rebuildLists();
         if (! targetCodes.empty())
         {
+            // The first target this console has (OVERVIEW PAGE: its first area).
             auto g = function();
-            (targetIsOption ? g.option : g.target) = targetCodes.front();
+            size_t first = 0;
+            const auto& enabled = lists[1].enabled;
+            while (first < enabled.size() && first + 1 < targetCodes.size() && ! enabled[first])
+                ++first;
+            (targetIsOption ? g.option : g.target) = targetCodes[first];
             store (g);
             rebuildLists();
         }

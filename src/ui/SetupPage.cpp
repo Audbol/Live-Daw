@@ -70,13 +70,6 @@ namespace
         return OnKey::forSetting (settings, inertKey (name), defaultValue);
     }
 
-    std::unique_ptr<ChoiceKeys> inertChoice (juce::PropertiesFile& settings, const juce::String& name, juce::StringArray labels, int defaultValue)
-    {
-        const auto key = inertKey (name);
-        return std::make_unique<ChoiceKeys> (std::move (labels), [&settings, key, defaultValue] { return settings.getIntValue (key, defaultValue); },
-                                             [&settings, key] (int i) { settings.setValue (key, i); });
-    }
-
     // ALT inputs and ALT-selected tiles [3.1].
     const juce::Colour altOrange = Colours::alt;
 
@@ -1066,7 +1059,8 @@ namespace
                                                           }),
                             3.7f);
             // The rest change how the fader strips, the channel strip and the status bar behave.
-            general.addRow ("TAP TEMPO FLASH", inertChoice (ctx.settings, "tapTempoFlash", { "OFF", "8X", "ON" }, 2), 3.7f); // only kept
+            // How a custom control key tapping a delay's TIME flashes (cc::ledState; manual 5.5 p. 47).
+            general.addRow ("TAP TEMPO FLASH", choiceSetting (uiprefs::tapTempoFlash, { "OFF", "8X", "ON" }, 2), 3.7f);
             general.addRow ("SOF BUTTON", choiceSetting (uiprefs::sofButton, { "AUTO", "ON", "FLASH" }, 0), 3.7f);
             general.addRow ("SHOW SOF FRAME", OnKey::forSetting (ctx.settings, uiprefs::showSofFrame, true), 1.3f);
             general.addRow ("SHOW SOURCE ON SCRIBBLE", onSetting (uiprefs::sourceOnScribble, true), 1.3f);
@@ -2639,7 +2633,8 @@ void SetupPage::initialize (const state::Scope& chosen, juce::uint32 sources, bo
     }
     const int strips = everything ? 0 : initializeParts (ctx, chosen);
     // The source groups: the audio interface's inputs (LCL), the playback
-    // channels (CRD), the USB player (PLAY) and the oscillators (OSC).
+    // channels (CRD), the USB player (PLAY), the USER SIGNAL group (USR: also
+    // what each copies, back to OFF) and the oscillators (OSC).
     int sourceCount = 0;
     for (int i = 0; i < ctx.engine.getNumSources(); ++i)
     {
@@ -2647,10 +2642,23 @@ void SetupPage::initialize (const state::Scope& chosen, juce::uint32 sources, bo
         const auto group = Recorder::isPlaybackSource (port)    ? ScopeWindow::SourceCard
                            : UsbRecorder::isPlayerSource (port) ? ScopeWindow::SourcePlayer
                            : MixerEngine::isOscSource (port)    ? ScopeWindow::SourceOsc
+                           : MixerEngine::isUsrSource (port)    ? ScopeWindow::SourceUser
                                                                 : ScopeWindow::SourceLocal;
         if ((sources & (juce::uint32) group) != 0)
         {
             ctx.engine.initializeSource (i);
+            if (const int n = MixerEngine::usrChannelOf (port); n >= 0)
+            {
+                if (auto* u = ctx.engine.getUserSignal (n))
+                {
+                    u->group = 0;
+                    u->number = 1;
+                    u->side = 0;
+                    u->post = false;
+                }
+                else
+                    ctx.engine.setUserPatch (n - ld::kNumUserSignals, -1);
+            }
             ++sourceCount;
         }
     }

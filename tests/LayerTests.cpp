@@ -98,6 +98,39 @@ public:
             expectEquals (layers.getEffectiveWidth (S::Left), 12);
         }
 
+        beginTest ("The WING COMPACT's VIRTUAL section: eight layers of its own, renamed and filled on CONFIG");
+        {
+            MixerEngine engine (0);
+            PluginHost host (nullptr);
+            Show show (engine, host);
+            engine.setNumChannels (40);
+            auto& layers = show.layers;
+            layers.setModel (ConsoleModel::Compact);
+            const auto vrt = layers.getDefaultLayers (engine, LayerSet::kVirtualSection);
+            expectEquals ((int) vrt.size(), LayerSet::kNumVirtualLayers);
+            expectEquals (vrt[0].id, juce::String ("vrt-1"));
+            expect (LayerSet::isVirtualLayer (vrt[7].id) && vrt[7].name.isEmpty() && vrt[7].faders.empty() && ! vrt[7].user);
+            expectEquals (layers.getEffectiveWidth (LayerSet::kVirtualSection), 8);
+
+            // CONFIG: an edited copy of the key and its name, saved with the show.
+            const auto ch3 = state::StripRef::of (*engine.getChannels()[2]);
+            layers.setDefaultOverride (LayerSet::kVirtualSection, "vrt-2", { state::FaderRef::of (ch3), state::FaderRef::blank(), state::FaderRef::ofDca (1) });
+            layers.renameUserLayer ("vrt-2", "KEYS");
+            layers.setSelectedLayerId (LayerSet::kVirtualSection, "vrt-2");
+            auto xml = show.toXml();
+            MixerEngine e2 (0);
+            e2.setNumChannels (40);
+            Show loaded (e2, host);
+            loaded.layers.setModel (ConsoleModel::Compact);
+            expect (loaded.loadFromXml (*xml).wasOk());
+            const auto keys = loaded.layers.findLayer (e2, LayerSet::kVirtualSection, "vrt-2");
+            expectEquals (keys.name, juce::String ("KEYS"));
+            expect (keys.faders.size() == 3 && keys.faders[0] == state::FaderRef::of (ch3) && keys.faders[1].isEmpty() && keys.faders[2].dca);
+            // The full-size console's center section is its own.
+            loaded.layers.setModel (ConsoleModel::Full);
+            expectEquals (loaded.layers.getDefaultLayers (e2, S::Center).front().id, juce::String ("dca-1"));
+        }
+
         beginTest ("Banks follow the console and the section width");
         {
             MixerEngine engine (0);
@@ -483,6 +516,27 @@ public:
             const auto* user = loaded.layers.getUserLayer (id);
             expect (user != nullptr && user->faders.size() == 3 && user->faders[0] == send && user->faders[1] == fxp && user->faders[2] == midiCc);
             expect (! user->faders[0].isStrip() && ! (user->faders[0] == state::FaderRef::of (ch1)));
+
+            // CONFIG's SOURCE / BUS CUSTOMIZATION and its "S" item (the selected
+            // channel's send, WING manual 5.10 Fig. 59-60) through the C ABI and a show.
+            const auto busSend = send.withBusCustomization (true);
+            const auto selSend = state::FaderRef::ofSelectedSend ({ StripKind::Bus, 3 });
+            const auto selBus = state::FaderRef::ofSelectedSend ({ StripKind::Main, 1 }, true);
+            expect (busSend.busCustom && ! (busSend == send) && selSend.selected && selSend.send && ! selSend.isStrip());
+            expect (! (selSend == selBus) && ! (selSend == state::FaderRef::ofSend (ch1, { StripKind::Bus, 3 })));
+            const auto custom = layers.addUserLayer ("Sends", { busSend, selSend, selBus });
+            xml = show.toXml();
+            MixerEngine e3 (0);
+            Show again (e3, host);
+            expect (again.loadFromXml (*xml).wasOk());
+            const auto* sends2 = again.layers.getUserLayer (custom);
+            expect (sends2 != nullptr && sends2->faders.size() == 3);
+            if (sends2 != nullptr && sends2->faders.size() == 3)
+            {
+                expect (sends2->faders[0] == busSend && sends2->faders[0].strip == ch1);
+                expect (sends2->faders[1] == selSend && ! sends2->faders[1].busCustom);
+                expect (sends2->faders[2] == selBus && sends2->faders[2].to.kind == StripKind::Main && sends2->faders[2].to.id == 1);
+            }
         }
     }
 };

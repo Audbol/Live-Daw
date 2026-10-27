@@ -7,16 +7,24 @@
 //!  1. channels + aux channels read their inputs and run their chains (parallel;
 //!     in waves when keys come from other channels: `keytap.rs`)
 //!  2. automix (gain sharing between channels in automix groups X/Y)
-//!  3. buses 9+ sum the input sends feeding them                       (parallel)
-//!  4. buses 1-8 sum input sends and sends from buses 9+               (parallel)
+//!  3. (and 4.) buses sum the input sends and the other buses' sends: in
+//!     waves, a bus after the buses feeding it (`routing.rs`)           (parallel)
 //!  5. mains sum channel/aux/bus main sends                            (parallel)
-//!  6. matrices sum matrix sends from all strips + their direct input  (parallel)
+//!  6. matrices sum matrix sends from all strips + their DIRECT IN     (parallel)
+//!     then the user signals (USR 1-24) copy their strips
 //!  7. solo (PFL/AFL per strip type, routed by the SOLO MODE) builds the solo
 //!     buses of the two monitor paths (SPEAKERS and PHONES), each with
 //!     its SOURCE (Main 1 by default) and DIRECT IN; then each path's EQ,
 //!     PAN / WIDTH, INVERT, DELAY, level, DIM, mute, MONO, SWAP and LIMITER
 //!     (`monitor.rs`)
-//!  8. outputs are written, then safety-clipped
+//!  8. outputs are written (strips, monitor paths, the sources patched to
+//!     outputs), then safety-clipped
+//!
+//! Signals from later in the chain are read one block late through return
+//! rings (`routing.rs`): a bus, main or matrix as a channel's source, a user
+//! signal patched to a channel, a bus send that closes a loop, a matrix's
+//! DIRECT IN from the monitor paths. So the processing order never has a
+//! cycle.
 //!
 //! Plugin delay compensation (`pdc.rs`): each summing stage reads its sources
 //! delayed so that every path arrives in time; input channels write their
@@ -51,9 +59,11 @@ use crate::monitor::{direct_source, MonitorPathDsp, SoloPatch, BAND_SOLO_MAX_DB}
 use crate::params::*;
 use crate::pdc::{pdc_tap, PdcState, MAX_PDC};
 use crate::pool::WorkerPool;
+use crate::routing::{bus_feeds_bus, matrix_direct_pair, return_tap, strip_source, BusSchedule, OutputPatch, ReturnClock};
+use crate::routing::{ReturnRing, NUM_PATCH_OUTPUTS, NUM_STRIP_SOURCES, STRIP_SOURCE_BASE};
 use crate::sends::{send_mode, MAX_BUSES};
 use crate::solo::{self, solo_mode, SoloBlock};
-use crate::sources::{SourceDsp, SourceTable};
+use crate::sources::{user_side, SourceDsp, SourceTable, UserSignalParams};
 use crate::strip::{source_ptr, KeyStrips, ProcessContext, Strip};
 use crate::talk::{TalkBlock, TalkGains, TalkRamps};
 use livedaw_dsp::util::*;
@@ -76,17 +86,17 @@ struct Topology {
     active_inputs: UnsafeCell<Vec<Arc<Strip>>>,
     /// Audio thread scratch: stage 1's waves by key dependency (`keytap.rs`).
     key_schedule: UnsafeCell<KeySchedule>,
-    /// Buses that can feed buses 1-8 (slot >= 8).
-    upper_buses: Vec<Arc<Strip>>,
-    /// Buses 1-8 (slot < 8).
-    lower_buses: Vec<Arc<Strip>>,
+    /// The buses by slot.
+    bus_list: Vec<Arc<Strip>>,
+    /// Audio thread scratch: the bus stage's waves by bus-to-bus sends (`routing.rs`).
+    bus_schedule: UnsafeCell<BusSchedule>,
     mains: Vec<Arc<Strip>>,
     matrices: Vec<Arc<Strip>>,
 }
 
-// SAFETY: `active_inputs` and `key_schedule` are only touched by the audio
-// thread (between stages, never while tasks run); everything else is immutable
-// after publishing.
+// SAFETY: `active_inputs`, `key_schedule` and `bus_schedule` are only touched
+// by the audio thread (between stages, never while tasks write them);
+// everything else is immutable after publishing.
 unsafe impl Sync for Topology {}
 unsafe impl Send for Topology {}
 
@@ -100,7 +110,7 @@ impl Topology {
         &*self.active_inputs.get()
     }
     fn buses(&self) -> impl Iterator<Item = &Arc<Strip>> + Clone {
-        self.lower_buses.iter().chain(&self.upper_buses)
+        self.bus_list.iter()
     }
     fn all(&self) -> impl Iterator<Item = &Arc<Strip>> + Clone {
         self.inputs().chain(self.buses()).chain(&self.mains).chain(&self.matrices)
@@ -184,6 +194,12 @@ struct AudioState {
     /// The sources' processing and the input pointers the channels read.
     sources: SourceDsp,
     block_counter: u64,
+    /// Where every return ring writes this block (`routing.rs`).
+    returns: ReturnClock,
+    /// The matrices' DIRECT IN from the monitor paths, one block late:
+    /// PHONES L/R, SPEAKERS L/R, the solo bus L/R; which pairs are written.
+    monitor_returns: ReturnRing,
+    monitor_returns_live: [bool; 3],
 }
 
 /// A monitor path's ramps from the last block.
@@ -259,6 +275,8 @@ pub struct Engine {
     io_latency: AtomicU32,
     /// Recall safes of sources and outputs (GLOBAL SAFE, `iosafes.rs`).
     io_safes: IoSafes,
+    /// ROUTING > OUTPUTS: the sources patched straight to outputs.
+    output_patch: OutputPatch,
 }
 
 // SAFETY: `audio` is only touched by the audio thread (process) or by prepare
@@ -312,6 +330,9 @@ impl Engine {
                 monitor_dsp: Default::default(),
                 sources: SourceDsp::default(),
                 block_counter: 0,
+                returns: ReturnClock::new(DEFAULT_BLOCK),
+                monitor_returns: ReturnRing::new(6, DEFAULT_BLOCK),
+                monitor_returns_live: [false; 3],
             }),
             controls: EngineControls::default(),
             fx: (0..NUM_FX).map(|_| FxRack::default()).collect(),
@@ -324,6 +345,7 @@ impl Engine {
             pdc: PdcState::default(),
             io_latency: AtomicU32::new(0),
             io_safes: IoSafes::default(),
+            output_patch: OutputPatch::default(),
         };
         // SAFETY: not published yet, no audio callback.
         unsafe {
@@ -382,15 +404,13 @@ impl Engine {
     fn publish(&self, st: &Structure) {
         let mut buses = st.buses.clone();
         buses.sort_by_key(|b| b.id());
-        let split = buses.iter().position(|b| b.id() as usize >= BUS_TO_BUS_TARGETS).unwrap_or(buses.len());
-        let upper = buses.split_off(split);
         let next = Box::new(Topology {
             channels: st.channels.clone(),
             auxes: st.auxes.clone(),
             active_inputs: UnsafeCell::new(Vec::with_capacity(st.channels.len() + st.auxes.len())),
             key_schedule: UnsafeCell::new(KeySchedule::new(st.channels.len() + st.auxes.len())),
-            upper_buses: upper,
-            lower_buses: buses,
+            bus_schedule: UnsafeCell::new(BusSchedule::new(buses.len())),
+            bus_list: buses,
             mains: st.mains.clone(),
             matrices: st.matrices.clone(),
         });
@@ -500,6 +520,7 @@ impl Engine {
         self.analysis.reset();
         self.sources.reset();
         self.io_safes.clear();
+        self.output_patch.reset();
         let mut names = self.names.lock().unwrap_or_else(|e| e.into_inner());
         *names = GroupNames::default();
         self.update_monitor_dcas(&names);
@@ -661,6 +682,61 @@ impl Engine {
         &self.sources
     }
 
+    /// ROUTING > OUTPUTS: the sources patched straight to hardware outputs.
+    pub fn output_patch(&self) -> &OutputPatch {
+        &self.output_patch
+    }
+
+    /// Message thread: nothing feeds hardware output `port` any more: no
+    /// strip, monitor path or source (an output has one source, as on the
+    /// console).
+    pub fn clear_output(&self, port: i32) {
+        if port < 0 {
+            return;
+        }
+        for s in self.lock().all() {
+            for o in [&s.params.output_left, &s.params.output_right] {
+                if o.load(Relaxed) == port {
+                    o.store(-1, Relaxed);
+                }
+            }
+        }
+        let c = &self.controls;
+        for o in [&c.monitor_output_left, &c.monitor_output_right, &c.phones.output_left, &c.phones.output_right] {
+            if o.load(Relaxed) == port {
+                o.store(-1, Relaxed);
+            }
+        }
+        // An outboard insert's FX SEND.
+        for f in &c.fx {
+            for o in [&f.send_left, &f.send_right] {
+                if o.load(Relaxed) == port {
+                    o.store(-1, Relaxed);
+                }
+            }
+        }
+        self.output_patch.set(port, -1);
+    }
+
+    /// Message thread: patches source `source` (an input index as channels
+    /// take it; -1 none) straight to hardware output `port`, replacing what
+    /// fed it (manual 5.4 OUTPUTS). A bus, main or matrix signal goes to the
+    /// strip's own output instead. False when `port` can't be patched.
+    pub fn route_output_source(&self, port: i32, source: i32) -> bool {
+        if usize::try_from(port).map_or(true, |p| p >= NUM_PATCH_OUTPUTS) {
+            return false;
+        }
+        self.clear_output(port);
+        if let Some((kind, number, side)) = crate::routing::strip_source(source) {
+            if let Some(s) = self.strip_by_number(kind, number as i32 + 1) {
+                if side == 0 { &s.params.output_left } else { &s.params.output_right }.store(port, Relaxed);
+            }
+            return true;
+        }
+        self.output_patch.set(port, source);
+        true
+    }
+
     /// Message thread: MONO / STEREO / MID-SIDE on ROUTING > SOURCES. The
     /// channels and aux patched to the pair's first source follow it, as on the
     /// console: stereo on the pair for STEREO and MID/SIDE, mono on the first
@@ -753,12 +829,19 @@ impl Engine {
         for s in st.channels.iter().chain(&st.auxes) {
             s.pdc.set(s.own_latency(&fx), 0);
         }
-        // Buses 9+ feed buses 1-8, so they come first; then mains, matrices.
-        let (lower, upper): (Vec<&Arc<Strip>>, Vec<&Arc<Strip>>) =
-            st.buses.iter().partition(|b| (b.id() as usize) < BUS_TO_BUS_TARGETS);
-        let summing: Vec<&Arc<Strip>> = upper.into_iter().chain(lower).chain(&st.mains).chain(&st.matrices).collect();
+        // The buses in the order the audio thread runs them (the buses
+        // feeding a bus first; a send closing a loop is a block late and
+        // not compensated), then mains, matrices.
+        let mut buses = st.buses.clone();
+        buses.sort_by_key(|b| b.id());
+        let mut schedule = BusSchedule::new(buses.len());
+        schedule.compute(|a, b| bus_send_enabled(&buses[a], &buses[b]));
+        let bus_order: Vec<usize> =
+            (0..schedule.num_waves()).flat_map(|w| schedule.wave(w).iter().map(|&b| b as usize)).collect();
+        let summing: Vec<&Arc<Strip>> = bus_order.iter().map(|&b| &buses[b]).chain(&st.mains).chain(&st.matrices).collect();
+        let feeds_of = |dst: &Strip| pdc_feeds(&st, &buses, &schedule, dst);
         for dst in &summing {
-            let target = pdc_feeds(&st, dst).iter().map(|(s, tap)| s.pdc.latency(*tap)).max().unwrap_or(0);
+            let target = feeds_of(dst).iter().map(|(s, tap)| s.pdc.latency(*tap)).max().unwrap_or(0);
             dst.pdc.set(add(dst.own_latency(&fx), target), target);
         }
 
@@ -767,7 +850,7 @@ impl Engine {
         let mut limited = false;
         for dst in &summing {
             let target = dst.pdc.target();
-            for (s, tap) in pdc_feeds(&st, dst) {
+            for (s, tap) in feeds_of(dst) {
                 let delay = target.saturating_sub(s.pdc.latency(tap)) as usize;
                 if delay > 0 {
                     needs_delay = true;
@@ -910,6 +993,9 @@ impl Engine {
             d.prepare(sample_rate, block_size);
         }
         a.sources.prepare(in_map.len(), block_size, sample_rate);
+        a.returns = ReturnClock::new(block_size);
+        a.monitor_returns = ReturnRing::new(6, block_size);
+        a.monitor_returns_live = [false; 3];
 
         for s in st.all() {
             s.prepare(sample_rate, block_size);
@@ -1035,6 +1121,7 @@ impl Engine {
 
     unsafe fn process_chunk(&self, topo: &Topology, a: &mut AudioState, n: usize) {
         let rec = &self.recorder;
+        let pos = a.returns.pos;
         // Sources first: the channels and the recorder's input streams read
         // the processed ports (gain, mute, polarity, stereo / mid-side pairs).
         a.sources.process(
@@ -1044,6 +1131,7 @@ impl Engine {
             self.usb.player_ptrs(),
             n,
             self.controls.mute_groups.load(Relaxed),
+            pos,
         );
         let streams = rec.record_streams();
         // Record hardware inputs (and playback channels) as they arrive.
@@ -1058,6 +1146,8 @@ impl Engine {
         });
         let solo = solo::console_pass(&self.controls, topo.all(), talk.active, source_solo.map(|(s, _)| s));
         let talk = &talk;
+        // What is read a block late this block, and the bus stage's order (routing.rs).
+        self.plan_returns(topo, a, n, source_solo.map(|(_, p)| p));
 
         let hw = SharedPtrs(a.sources.hw_ptrs());
         let hw = &hw;
@@ -1113,22 +1203,22 @@ impl Engine {
             s.write_pdc(n);
         }
 
-        // 3./4. Buses: 9+ first (they may feed buses 1-8), then 1-8.
+        // 3./4. Buses, in waves: a bus runs after the buses sending to it
+        // (a send that closes a loop reads its source's previous block).
         let ramps = &self.talk_ramps;
-        self.pool.parallel_for(topo.upper_buses.len(), &|i| {
-            let bus = &topo.upper_buses[i];
-            sum_bus(bus, topo.active().iter(), n);
-            add_talk(bus, talk.bus(bus.id() as usize), ramps.get(StripKind::Bus, bus.id() as usize), talk, n);
-            bus.process(&ctx_of(hw.get(), None), n);
-            bus.write_pdc(n);
-        });
-        self.pool.parallel_for(topo.lower_buses.len(), &|i| {
-            let bus = &topo.lower_buses[i];
-            sum_bus(bus, topo.active().iter().chain(&topo.upper_buses), n);
-            add_talk(bus, talk.bus(bus.id() as usize), ramps.get(StripKind::Bus, bus.id() as usize), talk, n);
-            bus.process(&ctx_of(hw.get(), None), n);
-            bus.write_pdc(n);
-        });
+        let schedule = &*topo.bus_schedule.get();
+        for w in 0..schedule.num_waves() {
+            let wave = schedule.wave(w);
+            self.pool.parallel_for(wave.len(), &|j| {
+                let index = wave[j] as usize;
+                let bus = &topo.bus_list[index];
+                sum_bus(bus, index, topo, schedule, pos, n);
+                add_talk(bus, talk.bus(bus.id() as usize), ramps.get(StripKind::Bus, bus.id() as usize), talk, n);
+                bus.process(&ctx_of(hw.get(), None), n);
+                bus.write_pdc(n);
+                bus.write_returns(pos, n);
+            });
+        }
 
         // 5. Mains
         self.pool.parallel_for(topo.mains.len(), &|i| {
@@ -1137,16 +1227,29 @@ impl Engine {
             add_talk(main, talk.main(i), ramps.get(StripKind::Main, i), talk, n);
             main.process(&ctx_of(hw.get(), None), n);
             main.write_pdc(n);
+            main.write_returns(pos, n);
         });
 
-        // 6. Matrices
+        // 6. Matrices (DIRECT IN: the monitor paths of the previous block)
+        let monitor_direct = MonitorReturns(std::array::from_fn(|ch| {
+            if a.monitor_returns_live[ch / 2] {
+                a.monitor_returns.read(ch, pos, n).map_or(std::ptr::null(), <[f32]>::as_ptr)
+            } else {
+                std::ptr::null()
+            }
+        }));
+        let monitor_direct = &monitor_direct;
         self.pool.parallel_for(topo.matrices.len(), &|i| {
             let mtx = &topo.matrices[i];
-            sum_matrix(mtx, i, topo, n);
+            sum_matrix(mtx, i, topo, monitor_direct.get(), n);
             add_talk(mtx, talk.matrix(i), ramps.get(StripKind::Matrix, i), talk, n);
             mtx.process(&ctx_of(hw.get(), None), n);
             mtx.write_pdc(n);
+            mtx.write_returns(pos, n);
         });
+
+        // The user signals, now that every strip has run (outputs take them now).
+        self.user_signals(topo, a, n);
 
         // Record strip taps, now that every strip has run.
         self.record_strips(topo, streams, n);
@@ -1158,6 +1261,87 @@ impl Engine {
         // 8. Outputs, then the safety clip
         self.write_outputs(topo, a, n);
         self.protect_outputs(a, n);
+        a.returns.advance(n);
+    }
+
+    /// Before the stages: which bus, main and matrix signals are read a
+    /// block late this block (a channel patched to one, a bus send closing a
+    /// loop), the bus stage's waves, the channels' pointers to the strip
+    /// sources, and which monitor paths the matrices' DIRECT IN reads.
+    unsafe fn plan_returns(&self, topo: &Topology, a: &mut AudioState, n: usize, solo: Option<SoloPatch>) {
+        let pos = a.returns.pos;
+        let want = |input: i32| {
+            if let Some((kind, number, _)) = strip_source(input) {
+                if let Some(s) = topo.by_number(kind, number as i32 + 1) {
+                    s.want_return(return_tap::OUT);
+                }
+            }
+        };
+        let (global, alt) = (self.controls.input_select_global.load(Relaxed), self.controls.global_alt.load(Relaxed));
+        for s in topo.inputs() {
+            let (l, r) = s.active_inputs(global, alt);
+            want(l);
+            want(if r < 0 && l >= 0 && s.params.stereo.load(Relaxed) { l + 1 } else { r });
+        }
+        if let Some(p) = solo {
+            want(p.left);
+            want(if p.right >= 0 { p.right } else { p.left + 1 });
+        }
+
+        let schedule = &mut *topo.bus_schedule.get();
+        let buses = &topo.bus_list;
+        schedule.compute(|from, to| bus_send_enabled(&buses[from], &buses[to]));
+        if schedule.num_waves() > 1 {
+            for (to, dst) in buses.iter().enumerate() {
+                for (from, src) in buses.iter().enumerate() {
+                    if from == to || !schedule.is_late(from, to) || !bus_send_enabled(src, dst) {
+                        continue;
+                    }
+                    let pre = src.sends.find(dst.id() as usize).is_some_and(|s| s.mode.load(Relaxed) == send_mode::PRE);
+                    src.want_return(if pre { return_tap::TAP } else { return_tap::OUT });
+                }
+            }
+        }
+        for s in buses.iter().chain(&topo.mains).chain(&topo.matrices) {
+            s.commit_returns();
+        }
+        for slot in 0..NUM_STRIP_SOURCES {
+            let ptr = strip_source(STRIP_SOURCE_BASE + slot as i32)
+                .and_then(|(kind, number, side)| {
+                    topo.by_number(kind, number as i32 + 1)?.read_return(return_tap::OUT, side, pos, n)
+                })
+                .map_or(std::ptr::null(), <[f32]>::as_ptr);
+            a.sources.set_strip_return(slot, ptr);
+        }
+
+        let mut wanted = [false; 3];
+        for m in &topo.matrices {
+            if let Some(pair) = matrix_direct_pair(m.params.direct_source.load(Relaxed)) {
+                wanted[pair] |= m.params.direct_on.load(Relaxed);
+            }
+        }
+        for (pair, &w) in wanted.iter().enumerate() {
+            if w && !a.monitor_returns_live[pair] {
+                a.monitor_returns.clear(2 * pair);
+                a.monitor_returns.clear(2 * pair + 1);
+            }
+            a.monitor_returns_live[pair] = w;
+        }
+    }
+
+    /// The user signals (USR 1-24): each routed one copies its strip's tap
+    /// (PRE) or processed signal (POST: an input or aux channel after its
+    /// processing, before the pan; a bus, main or matrix its output), one
+    /// side or both mixed (manual 2.6), then gets its source processing.
+    unsafe fn user_signals(&self, topo: &Topology, a: &mut AudioState, n: usize) {
+        for (i, u) in self.sources.user_signals().iter().enumerate() {
+            let Some(buf) = a.sources.user_raw_mut(i, n) else { continue };
+            match u.strip().and_then(|(kind, number)| topo.by_number(kind, number)) {
+                Some(s) => copy_user_signal(s, u, buf, n),
+                None => buf.fill(0.0),
+            }
+        }
+        a.sources.process_user_signals(&self.sources, a.returns.pos, n, self.controls.mute_groups.load(Relaxed));
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -1188,7 +1372,9 @@ impl Engine {
             channels: &topo.channels,
             key_strips: KeyStrips {
                 auxes: &topo.auxes,
-                buses: [&topo.lower_buses, &topo.upper_buses],
+                buses: &topo.bus_list,
+                // SAFETY: the schedule is computed before the stages and only read while they run.
+                bus_waves: unsafe { (*topo.bus_schedule.get()).waves() },
                 mains: &topo.mains,
                 matrices: &topo.matrices,
             },
@@ -1356,6 +1542,14 @@ impl Engine {
         if listen {
             solo_paths |= 1 << listen_path;
         }
+        // The solo bus (the selected path's, before its SOURCE) for a
+        // matrix DIRECT IN MON.BUS next block.
+        let pos = a.returns.pos;
+        if a.monitor_returns_live[2] {
+            let [l, r] = &a.monitor[listen_path];
+            a.monitor_returns.write(4, pos, &l[..n]);
+            a.monitor_returns.write(5, pos, &r[..n]);
+        }
 
         // Each path's SOURCE (Main 1 by default), crossfaded when it changes.
         for (path, src) in sources.iter().enumerate() {
@@ -1451,6 +1645,12 @@ impl Engine {
             }
             peak[0].fetch_max(peak_level(l));
             peak[1].fetch_max(peak_level(rr));
+            // The path as a matrix DIRECT IN (MON.PH / MON.SPK) next block.
+            let pair = if path == 1 { 0 } else { 1 };
+            if a.monitor_returns_live[pair] {
+                a.monitor_returns.write(2 * pair, pos, l);
+                a.monitor_returns.write(2 * pair + 1, pos, rr);
+            }
         }
     }
     unsafe fn write_outputs(&self, topo: &Topology, a: &mut AudioState, n: usize) {
@@ -1482,6 +1682,19 @@ impl Engine {
             } else {
                 add_to(l, d.out(0, n));
                 add_to(r, d.out(1, n));
+            }
+        }
+
+        // Sources patched straight to outputs (ROUTING > OUTPUTS): the
+        // processed source, a user signal of this block.
+        let (hw, internal) = (a.sources.hw_ptrs(), a.sources.playback_ptrs());
+        for (port, source) in self.output_patch.ports.iter().enumerate().take(outs.len()) {
+            let source = source.load(Relaxed);
+            if source < 0 {
+                continue;
+            }
+            if let Some(p) = source_ptr(hw, internal, source) {
+                add_to(port as i32, std::slice::from_raw_parts(p, n));
             }
         }
 
@@ -1696,17 +1909,32 @@ fn matrix_send_route(s: &Strip, send: &MatrixSendParams) -> (usize, Option<f32>)
     (tap, pan)
 }
 
-/// The (source, tap) pairs summing strip `dst` adds up, as its stage reads
-/// them: the enabled sends (and a matrix's direct input).
-fn pdc_feeds<'a>(st: &'a Structure, dst: &Strip) -> Vec<(&'a Arc<Strip>, usize)> {
+/// Bus `from` sends to bus `to` (enabled; the level may be down).
+fn bus_send_enabled(from: &Strip, to: &Strip) -> bool {
+    let (a, b) = (from.id().max(0) as usize, to.id().max(0) as usize);
+    bus_feeds_bus(a, b) && from.sends.find(b).is_some_and(|s| s.enabled.load(Relaxed))
+}
+
+/// The (source, tap) pairs summing strip `dst` adds up in the same block, as
+/// its stage reads them: the enabled sends, but not a bus send that closes a
+/// loop (`schedule`, over `buses` by slot), which arrives a block late.
+fn pdc_feeds<'a>(
+    st: &'a Structure,
+    buses: &'a [Arc<Strip>],
+    schedule: &BusSchedule,
+    dst: &Strip,
+) -> Vec<(&'a Arc<Strip>, usize)> {
     let inputs = st.channels.iter().chain(&st.auxes);
     let index = dst.id().max(0) as usize;
     let tap_or_out = |pre: bool| if pre { pdc_tap::TAP } else { pdc_tap::OUT };
     let mut feeds = Vec::new();
     match dst.kind() {
         StripKind::Bus => {
-            let upper = st.buses.iter().filter(|b| index < BUS_TO_BUS_TARGETS && b.id() as usize >= BUS_TO_BUS_TARGETS);
-            for s in inputs.chain(upper) {
+            let me = buses.iter().position(|b| std::ptr::eq(b.as_ref(), dst));
+            let feeding = buses.iter().enumerate().filter(|(a, b)| {
+                me.is_some_and(|me| *a != me && !schedule.is_late(*a, me)) && bus_feeds_bus(b.id() as usize, index)
+            });
+            for s in inputs.chain(feeding.map(|(_, b)| b)) {
                 let Some(send) = s.sends.find(index).filter(|send| send.enabled.load(Relaxed)) else { continue };
                 let tap = match send.mode.load(Relaxed) {
                     send_mode::PRE => pdc_tap::TAP,
@@ -1731,58 +1959,91 @@ fn pdc_feeds<'a>(st: &'a Structure, dst: &Strip) -> Vec<(&'a Arc<Strip>, usize)>
                     feeds.push((s, matrix_send_route(s, send).0));
                 }
             }
-            let p = &dst.params;
-            let source = usize::try_from(p.direct_source.load(Relaxed)).ok();
-            if let Some(ch) = source.and_then(|i| st.channels.get(i)).filter(|_| p.direct_on.load(Relaxed)) {
-                feeds.push((ch, if p.direct_pre.load(Relaxed) { pdc_tap::PFL } else { pdc_tap::OUT }));
-            }
+            // (DIRECT IN comes from the monitor paths, a block late.)
         }
         StripKind::Channel | StripKind::Aux => {}
     }
     feeds
 }
 
+/// Bus `index` (in the bus list) sums the active inputs' sends and the
+/// other buses' (manual 5.10 BUS → BUS). A bus send from an earlier wave
+/// takes this block's signal; one that closes a loop (`schedule`) takes its
+/// source's previous block from the return ring at the clock's `pos`.
+///
 /// # Safety
-/// Bus task only, after the stages feeding it.
-unsafe fn sum_bus<'a>(bus: &Strip, sources: impl Iterator<Item = &'a Arc<Strip>>, n: usize) {
+/// Bus task only, after the stages and waves feeding it.
+unsafe fn sum_bus(bus: &Strip, index: usize, topo: &Topology, schedule: &BusSchedule, pos: usize, n: usize) {
     bus.begin_summed_block(n);
     let slot = bus.id() as usize;
     let target = bus.pdc.target();
-
-    for s in sources {
-        let Some(send) = s.sends.find(slot) else { continue };
-        let mode = send.mode.load(Relaxed);
-        let level = if !send.enabled.load(Relaxed) {
-            0.0
-        } else if mode == send_mode::GROUP {
-            1.0 // GROUP has no send level
-        } else if mode == send_mode::PRE && tap_send_muted(s, send.ignore_mute.load(Relaxed)) {
-            0.0
-        } else {
-            db_to_gain(send.level_db.load())
-        };
-        let last = &mut *send.last_gain.get();
-        let src = s.dsp();
-        if (level == 0.0 && *last == [0.0, 0.0]) || src.idle() {
-            *last = [0.0, 0.0]; // silent strips have nothing to add
+    for s in topo.active() {
+        add_bus_send(bus, s, slot, target, None, n);
+    }
+    for (from, s) in topo.bus_list.iter().enumerate() {
+        if from == index || !bus_feeds_bus(s.id() as usize, slot) {
             continue;
         }
-        match mode {
-            send_mode::GROUP => {
-                let (l, r) = (tap_at(s, pdc_tap::OUT, target, 0, n), tap_at(s, pdc_tap::OUT, target, 1, n));
-                add_pair(bus, n, l, r, last, [level, level])
-            }
-            mode => {
-                let pan = match (send.pan_link.load(Relaxed), send.pan_reversed.load(Relaxed)) {
-                    (true, false) => None,
-                    (true, true) => Some(-s.params.pan.load() / 100.0), // LINK REVERSED
-                    (false, _) => Some(send.pan.load() / 100.0),
-                };
-                let g = pre_gains(s, pan);
-                let tap = if mode == send_mode::PRE { pdc_tap::TAP } else { pdc_tap::POST };
-                let (l, r) = (tap_at(s, tap, target, 0, n), tap_at(s, tap, target, 1, n));
-                add_pair(bus, n, l, r, last, [level * g[0], level * g[1]]);
-            }
+        add_bus_send(bus, s, slot, target, schedule.is_late(from, index).then_some(pos), n);
+    }
+}
+
+/// Adds strip `s`'s send to bus slot `slot` into `bus`. `late`: the send
+/// closes a loop and reads `s`'s previous block at that return clock
+/// position (its output, or its tap for PRE; the send's own pan balances it,
+/// and it follows `s`'s own MUTE), never `s`'s buffers, which may be running.
+unsafe fn add_bus_send(bus: &Strip, s: &Strip, slot: usize, target: u32, late: Option<usize>, n: usize) {
+    let Some(send) = s.sends.find(slot) else { return };
+    let mode = send.mode.load(Relaxed);
+    let muted = || match late {
+        Some(_) => s.params.mute.load(Relaxed),
+        None => tap_send_muted(s, send.ignore_mute.load(Relaxed)),
+    };
+    let level = if !send.enabled.load(Relaxed) {
+        0.0
+    } else if mode == send_mode::GROUP {
+        1.0 // GROUP has no send level
+    } else if mode == send_mode::PRE && muted() {
+        0.0
+    } else {
+        db_to_gain(send.level_db.load())
+    };
+    let last = &mut *send.last_gain.get();
+    if level == 0.0 && *last == [0.0, 0.0] {
+        return;
+    }
+    let pan = match (send.pan_link.load(Relaxed), send.pan_reversed.load(Relaxed)) {
+        (true, false) => None,
+        (true, true) => Some(-s.params.pan.load() / 100.0), // LINK REVERSED
+        (false, _) => Some(send.pan.load() / 100.0),
+    };
+    if let Some(pos) = late {
+        let tap = if mode == send_mode::PRE { return_tap::TAP } else { return_tap::OUT };
+        let (Some(l), Some(r)) = (s.read_return(tap, 0, pos, n), s.read_return(tap, 1, pos, n)) else {
+            *last = [0.0, 0.0];
+            return;
+        };
+        let (gl, gr) = match pan {
+            Some(p) if mode != send_mode::GROUP => stereo_balance(p),
+            _ => (1.0, 1.0),
+        };
+        add_pair(bus, n, l, r, last, [level * gl, level * gr]);
+        return;
+    }
+    if s.dsp().idle() {
+        *last = [0.0, 0.0]; // silent strips have nothing to add
+        return;
+    }
+    match mode {
+        send_mode::GROUP => {
+            let (l, r) = (tap_at(s, pdc_tap::OUT, target, 0, n), tap_at(s, pdc_tap::OUT, target, 1, n));
+            add_pair(bus, n, l, r, last, [level, level])
+        }
+        mode => {
+            let g = pre_gains(s, pan);
+            let tap = if mode == send_mode::PRE { pdc_tap::TAP } else { pdc_tap::POST };
+            let (l, r) = (tap_at(s, tap, target, 0, n), tap_at(s, tap, target, 1, n));
+            add_pair(bus, n, l, r, last, [level * g[0], level * g[1]]);
         }
     }
 }
@@ -1817,7 +2078,7 @@ unsafe fn sum_main<'a>(main: &Strip, index: usize, sources: impl Iterator<Item =
 
 /// # Safety
 /// Matrix task `index` only, after the main stage.
-unsafe fn sum_matrix(mtx: &Strip, index: usize, topo: &Topology, n: usize) {
+unsafe fn sum_matrix(mtx: &Strip, index: usize, topo: &Topology, monitor: &[*const f32; 6], n: usize) {
     mtx.begin_summed_block(n);
     let target = mtx.pdc.target();
     for s in topo.active().iter().chain(topo.buses()).chain(&topo.mains) {
@@ -1849,23 +2110,69 @@ unsafe fn sum_matrix(mtx: &Strip, index: usize, topo: &Topology, n: usize) {
         }
     }
 
-    // Direct input from an input channel (mix-minus: invert it).
+    // DIRECT IN (manual 6.4): the PHONES, the SPEAKERS or the solo bus, a
+    // block late (the monitor runs after the matrices); AES is silent here.
     let p = &mtx.params;
-    let source = p.direct_source.load(Relaxed);
-    let on = p.direct_on.load(Relaxed) && source >= 0;
+    let pair = matrix_direct_pair(p.direct_source.load(Relaxed));
+    let on = p.direct_on.load(Relaxed) && pair.is_some();
     let gain =
         if on { db_to_gain(p.direct_level_db.load()) * if p.direct_invert.load(Relaxed) { -1.0 } else { 1.0 } } else { 0.0 };
     let prev = mtx.dsp().last_direct();
-    if let Some(ch) = topo.channels.get(source.max(0) as usize).filter(|_| source >= 0) {
-        let src = ch.dsp();
-        if !src.idle() && (gain != 0.0 || prev != 0.0) {
-            let tap = if p.direct_pre.load(Relaxed) { pdc_tap::PFL } else { pdc_tap::OUT };
-            let (l, r) = (tap_at(ch, tap, target, 0, n), tap_at(ch, tap, target, 1, n));
+    let ptrs = pair.map(|pair| (monitor[2 * pair], monitor[2 * pair + 1]));
+    match ptrs {
+        Some((l, r)) if !l.is_null() && !r.is_null() && (gain != 0.0 || prev != 0.0) => {
+            let (l, r) = (std::slice::from_raw_parts(l, n), std::slice::from_raw_parts(r, n));
             let mut ramp = [prev, prev];
             add_pair(mtx, n, l, r, &mut ramp, [gain, gain]);
         }
+        _ => {}
     }
     mtx.dsp_mut().set_last_direct(gain);
+}
+
+/// Copies user signal `u`'s side of strip `s` into `buf` (manual 2.6): PRE
+/// takes the tap point, POST an input or aux channel after its processing
+/// (before the pan) and a bus, main or matrix its output; L+R mixes a stereo
+/// strip's sides at half each; a mono channel's one side whatever the
+/// setting.
+///
+/// # Safety
+/// Audio thread, after every stage.
+unsafe fn copy_user_signal(s: &Strip, u: &UserSignalParams, buf: &mut [f32], n: usize) {
+    let d = s.dsp();
+    if d.idle() {
+        buf.fill(0.0);
+        return;
+    }
+    let post = u.post.load(Relaxed);
+    let side = |ch: usize| match (post, s.kind().is_input()) {
+        (false, _) => d.tap_signal(ch, n),
+        (true, true) => d.post(ch, n),
+        (true, false) => d.out(ch, n),
+    };
+    let stereo = !s.kind().is_input() || d.channels() > 1;
+    match u.side.load(Relaxed) {
+        _ if !stereo => buf.copy_from_slice(side(0)),
+        user_side::LEFT => buf.copy_from_slice(side(0)),
+        user_side::RIGHT => buf.copy_from_slice(side(1)),
+        _ => {
+            for ((b, l), r) in buf.iter_mut().zip(side(0)).zip(side(1)) {
+                *b = 0.5 * (l + r);
+            }
+        }
+    }
+}
+
+/// The matrices' DIRECT IN signals for the parallel tasks (the monitor
+/// return ring's channels, null where not written).
+struct MonitorReturns([*const f32; 6]);
+// SAFETY: the ring's read window, which nothing writes during the matrix stage.
+unsafe impl Sync for MonitorReturns {}
+
+impl MonitorReturns {
+    fn get(&self) -> &[*const f32; 6] {
+        &self.0
+    }
 }
 
 impl Drop for Engine {

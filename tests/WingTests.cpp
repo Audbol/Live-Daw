@@ -330,6 +330,9 @@ public:
             auto send = [&] (const juce::MemoryBlock& m) { sock.write ("127.0.0.1", port, m.getData(), (int) m.getSize()); };
             send (oscInt ("/$ctl/layer/C/sel", 4));
             send (oscText ("/$ctl/user/1/1/enc/mode", "FDR"));
+            // OTHER > DAW LAYER on a key: the mode, then its own node (other).
+            send (oscText ("/$ctl/user/1/2/bu/mode", "OTHER"));
+            send (oscText ("/$ctl/user/1/2/bu/other", "DAWSW"));
             send (oscInt ("/$ctl/user/sel", 5));
             // Answered after the sets: they have reached the queue.
             expect (ask (sock, port, oscGet ("/$ctl/user/1/1/enc/mode")).contains ("FDR"));
@@ -338,6 +341,8 @@ public:
             expectEquals (bank, 4);
             expectEquals (show.layers.getSelectedLayerId (LayerSet::Center), juce::String ("bus-1"));
             expect (show.getCustomControlsXml().contains ("enc=\"1,"), show.getCustomControlsXml());
+            expect (show.getCustomControlsXml().contains ("bu=\"11,0,17\""), show.getCustomControlsXml());
+            expect (ask (sock, port, oscGet ("/$ctl/user/1/2/bu/other")).contains ("DAWSW"));
 
             // Changes on the console reach clients.
             show.layers.addUserLayer ("Drums");

@@ -214,6 +214,10 @@ private:
     bool upperIsDaw() const;
     /** The layer keys read DAW 1-4 in DAW mode. */
     void applyDawMode();
+    /** A custom control key pressed or released: held, the encoder above it
+        sets what it switches (WING manual 4.8 p. 25, FX PAR); released, its
+        push function ends (DAW BUTTONS, MIDI push, TALKBACK). */
+    void holdKey (int column, const cc::Function&, bool down);
 
     UiContext& ctx;
     int lowerLayer = MuteGroups;
@@ -221,6 +225,7 @@ private:
     std::shared_ptr<float> wheelPos = std::make_shared<float> (0.5f);
     int sceneCursor = -1; // -1: the scene after the current one
     int shownCcRevision = -1, shownCcLayer = -1;
+    int heldColumn = -1; // the encoder column a held key took over (holdKey), or -1
     Strip* shownSelection = nullptr;
     juce::String shownValues;
     bool shownDaw = false;

@@ -91,8 +91,11 @@ ld::FaderRefC FaderRef::toC() const noexcept
         return { ld::kFaderFxParam, fxSlot, -1, param };
     if (midiCc)
         return { ld::kFaderMidiCc, midiChannel, -1, cc };
+    const int32_t flags = busCustom ? ld::kFaderBusCustom : 0;
+    if (send && selected)
+        return { ld::kFaderSelSend, 0, static_cast<int32_t> (to.kind), to.id, flags };
     if (send)
-        return { static_cast<int32_t> (strip.kind), strip.id, static_cast<int32_t> (to.kind), to.id };
+        return { static_cast<int32_t> (strip.kind), strip.id, static_cast<int32_t> (to.kind), to.id, flags };
     return { static_cast<int32_t> (strip.kind), strip.id, -1, 0 };
 }
 
@@ -106,9 +109,12 @@ FaderRef FaderRef::fromC (ld::FaderRefC r) noexcept
         return ofFxParam (r.id, r.toId);
     if (r.kind == ld::kFaderMidiCc)
         return ofMidiCc (r.id, r.toId);
+    const bool bus = (r.flags & ld::kFaderBusCustom) != 0;
+    if (r.kind == ld::kFaderSelSend)
+        return ofSelectedSend (StripRef::fromC ({ r.toKind, r.toId }), bus);
     const auto from = StripRef::fromC ({ r.kind, r.id });
     if (r.toKind == ld::kBus || r.toKind == ld::kMain || r.toKind == ld::kMatrix)
-        return ofSend (from, StripRef::fromC ({ r.toKind, r.toId }));
+        return ofSend (from, StripRef::fromC ({ r.toKind, r.toId })).withBusCustomization (bus);
     return of (from);
 }
 

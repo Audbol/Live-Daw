@@ -185,13 +185,14 @@ This list matches the notice Sidecar shows at start-up.
   matrices up to 8192 samples; solo, monitoring, direct outs and recorder taps are
   not compensated.
 - **WING remote apps:** the WING network protocols answer every parameter of the
-  WING 3.1 tree but one; 89.6 % drive the engine or Sidecar's settings, the rest
-  answers the WING's factory value and is stored but does nothing. WING Edit 3.3.4
-  works with it (sync both ways, live control, FX, processing models, inserts, the
-  EXTERNAL effect as an outboard insert; a plugin's FX slot shows as an EXTERNAL
-  effect); the parameters WING Edit knows from firmware newer than 3.1 are ignored.
-  WING Copilot has not been tried, and exported WING snapshots have not been loaded
-  into a console.
+  WING 3.1 tree but one; 93.0 % drive the engine or Sidecar's settings (of 79,326,
+  counting every processing model's parameters and every custom control mode's
+  function nodes); the rest answers the WING's factory value and is stored but does
+  nothing. WING Edit 3.3.4 works with it (sync both ways, live control, FX,
+  processing models, inserts, the EXTERNAL effect as an outboard insert; a plugin's
+  FX slot shows as an EXTERNAL effect); the parameters WING Edit knows from firmware
+  newer than 3.1 are ignored. WING Copilot has not been tried, and exported WING
+  snapshots have not been loaded into a console.
 - **MIDI and DAW remote control** (MCU / HUI) have not been tested with real hardware.
 - **LIBRARY:** scene and snippet files are Sidecar's own (.lsnap / .lsnip), not the
   WING's .snap / .snip, and the CLIP tab plays its clip on the USB player.

@@ -11,6 +11,19 @@ namespace livedaw::ui
 class MemberAssignView;
 class DcaPanel;
 
+/** A bank of the VIEW screens' bank keys: "1-8" ... "DCA 9-16" and its faders. */
+struct ViewBank
+{
+    juce::String key, title;
+    std::vector<state::FaderRef> faders;
+    int group = 0; // the column leaves a gap between groups
+};
+
+/** The bank keys' banks: each strip kind in banks of eight ("1-8" ...
+    "33-40", "AUX", "BUS 1-8", ...), the mains and matrices one group, then
+    the DCAs (also the custom controls' OVERVIEW PAGE banks). */
+std::vector<ViewBank> viewBanks (UiContext&);
+
 /** The VIEW screens (manual 5.7-5.11), opened by the fader sections' VIEW keys
     and by each other's status-bar keys: OVERVIEW (every strip's blocks),
     FADERS, SENDS, CONFIG (fader layers) and MUTE GROUPS. They show the fader
@@ -32,6 +45,9 @@ public:
     std::vector<StatusKey> getStatusKeys() override;
     StatusTitle getStatusTitle() override;
     void refresh() override;
+    /** A custom control's OVERVIEW PAGE: section `s`, on layer key `bank`
+        (0-8) or fixed bank `bank - cc::kFirstOverviewBank`. */
+    void showOverviewBank (LayerSet::Section s, int bank);
     void paint (juce::Graphics&) override;
     void resized() override;
 
@@ -51,18 +67,20 @@ protected:
     void timerCallback() override;
 
     bool isCompact() const noexcept { return ctx.consoleModel == ConsoleModel::Compact; }
-    /** The section shown: the WING COMPACT has only its one (the left). */
-    LayerSet::Section section() const noexcept { return ctx.consoleModel == ConsoleModel::Compact ? LayerSet::Left : ctx.viewSection; }
+    /** The section shown: the WING COMPACT has its fader section (the left)
+        and its VIRTUAL section (WING manual 5.7 p. 61, Fig. 55; the center). */
+    LayerSet::Section section() const noexcept
+    {
+        if (ctx.consoleModel == ConsoleModel::Compact)
+            return ctx.viewSection == LayerSet::kVirtualSection ? LayerSet::kVirtualSection : LayerSet::Left;
+        return ctx.viewSection;
+    }
+    /** The COMPACT's VIRTUAL section is shown. */
+    bool isVirtual() const noexcept { return isCompact() && section() == LayerSet::kVirtualSection; }
     juce::String currentLayerId() const;
     Layer currentLayer() const;
-    /** A bank of the bank keys: "1-8" ... "DCA 9-16" and its faders. */
-    struct Bank
-    {
-        juce::String key, title;
-        std::vector<state::FaderRef> faders;
-        int group = 0; // the column leaves a gap between groups
-    };
-    std::vector<Bank> banks() const;
+    using Bank = ViewBank;
+    std::vector<Bank> banks() const { return viewBanks (ctx); }
     /** The bank shown instead of the layer (-1: the layer). */
     int shownBank() const noexcept { return bank[section()]; }
     /** Faders shown at once (the section's width). */
@@ -117,7 +135,9 @@ public:
     void resized() override;
 
 protected:
-    bool hasLayerColumn() const override { return section() != LayerSet::Left; }
+    /** Not on the full-size WING's left section; the COMPACT's (with COMPACT
+        and VIRTUAL at its foot) has it. */
+    bool hasLayerColumn() const override { return isCompact() || section() != LayerSet::Left; }
     void paintContent (juce::Graphics&) override;
 
 private:
@@ -256,6 +276,10 @@ private:
 
     int category = 0; // CHANNELS, BUS/MAIN, DCA, then SENDS, BUS -> BUS, FX, MIDI CC (the fields)
     int sendDest = 0, busDest = 0, fxSlot = 0, midiBank = 0;
+    /** SOURCE / BUS CUSTOMIZATION (manual 5.10 p. 66, Fig. 60): the send
+        faders assigned show their destination's name, colour and icon. */
+    bool busCustomization = false;
+    juce::Rectangle<int> sourceCustomKey, busCustomKey;
     std::vector<state::FaderRef> selectedItems;
     std::vector<juce::Rectangle<int>> categoryKeys, sourceTiles, slotAreas, plates;
     juce::Rectangle<int> sourceArea, slotsArea, hintArea;

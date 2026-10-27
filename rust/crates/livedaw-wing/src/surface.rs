@@ -10,9 +10,13 @@
 //! What the nodes mean, from the protocol document's `/$ctl` tables and
 //! libwing's tree (guesses are marked):
 //!
-//! - `L`, `C`, `R` are the three fader sections (`CMPCT`, `RCK`, `EXT` and
-//!   `VRT`, the other models' surfaces, answer the WING's factory values and
-//!   keep what a client sets). `sel` 1-7
+//! - `L`, `C`, `R` are the three fader sections (`CMPCT`, `RCK` and `EXT`,
+//!   the other models' surfaces, answer the WING's factory values and keep
+//!   what a client sets). `VRT` is the COMPACT's (and RACK's) virtual
+//!   section: its eight layers `1`-`8` are Sidecar's virtual layers (names
+//!   and faders, on either model); `sel` and `ofs` are the COMPACT's VIRTUAL
+//!   section's while the console is a COMPACT (else they read 1 and 0).
+//!   `sel` 1-7
 //!   picks a layer key in the console's order (left: CH 1-12, 13-24, 25-36,
 //!   37-40 / AUX, BUSES, USER 1, USER 2; center: DCA, MAIN, AUX, BUSES, USER 1,
 //!   USER 2; right: MAIN, DCA, CH 1-40, AUX, BUSES, USER 1, USER 2) and reads
@@ -46,26 +50,34 @@
 //!   `U1..U4`, `MM` and `D1..D4` are the WING COMPACT's key sets (WING
 //!   Edit 3.3's CC EDIT on a Compact: USER 1-4 .. USER 13-16, MAIN/MTX 5-8,
 //!   DCA 1-4 .. DCA 13-16; the document: "U1..4: User, MM: Main/Matrix,
-//!   D1..4: DCA"), four upper keys each with a colour, while the console is
-//!   a COMPACT. On the full-size console `U1..U3` stay the 4-Channel
-//!   section's F1-F3 layers (an older guess) and the others answer the
-//!   factory values. `mode` of `enc`, `bu` and `bd` is the
-//!   function; a new function starts at its first target, as on CC EDIT. A
-//!   control has one name (`enc/name`, `bu/name` where there is no encoder)
-//!   and a colour; `$fname` reads the function's name. `sel`: the upper
-//!   part's layer (1-16; the document says the console answers 0-15).
+//!   D1..4: DCA"), four upper keys each with a colour, on either model (WING
+//!   Edit lists them on the full-size WING too, greyed; the manual: "all
+//!   layers are configurable on any model"). The full-size WING has no
+//!   layers of its own for the 4-Channel section: its F1-F3 play layers 1-3
+//!   (manual 5.5 p. 48). `mode` of `enc`, `bu` and `bd` is the
+//!   function; a new function starts at its first target, as on CC EDIT. The
+//!   function's targets and options are the mode's own nodes (`ch`, `fx`,
+//!   `par`, `other`, `area`, `bank` ...: the schema's custom control slots),
+//!   read and set through [`Surface::get_cc_param`] and
+//!   [`Surface::set_cc_param`]; a node Sidecar has no equivalent for keeps
+//!   what a client sets. A control has one name (`enc/name`, `bu/name` where
+//!   there is no encoder) and a colour; `$fname` reads the function's name.
+//!   `sel`: the upper part's layer (1-16; the document says the console
+//!   answers 0-15).
 
 use crate::map::{SetError, WingState};
 use crate::value::Value;
 use livedaw_engine::params::{NUM_DCAS, NUM_FX};
 use livedaw_engine::{Engine, StripKind};
 use livedaw_session::custom::{
-    CcFunction, CustomControls, COMPACT_MAIN_MATRIX_LAYER, FIRST_COMPACT_DCA_LAYER, FIRST_COMPACT_USER_LAYER, FIRST_DAW_LAYER,
-    NUM_COMPACT_SETS, NUM_CONTROLS, NUM_LAYERS,
+    daw_command_group, other, CcFunction, CustomControls, CC_BANK_CATEGORY, COMPACT_MAIN_MATRIX_LAYER, FADER_SPILL_CATEGORY,
+    FIRST_COMPACT_DCA_LAYER, FIRST_COMPACT_USER_LAYER, FIRST_DAW_LAYER, FX_PARAMETER_CATEGORY, INSERT_POST_CATEGORY,
+    INSERT_PRE_CATEGORY, NUM_COMPACT_SETS, NUM_CONTROLS, NUM_LAYERS, OTHER_CATEGORY, OVERVIEW_PAGE_CATEGORY, USER_LAYER,
 };
-use livedaw_session::layers::{slots, ConsoleRefs, FaderRef, Layer, LayerSet, SpillKind, NUM_SECTIONS};
+use livedaw_session::layers::{
+    slots, ConsoleRefs, FaderRef, Layer, LayerSet, SpillKind, NUM_SECTIONS, NUM_VIRTUAL_LAYERS, VIRTUAL_KEYS, VIRTUAL_SECTION,
+};
 use livedaw_session::refs::StripRef;
-use livedaw_session::ConsoleModel;
 use std::collections::VecDeque;
 
 /// The layer keys of each section in the WING's order, as Sidecar's layer ids.
@@ -81,6 +93,15 @@ const KEY_NAMES: [&[&str]; NUM_SECTIONS] = [
     &["DCA", "MAIN", "AUX", "BUSES", "", ""],
     &["MAIN", "DCA", "CH1-40", "AUX", "BUSES", "", ""],
 ];
+/// `/$ctl/layer/VRT`: the virtual section, after L, C and R.
+pub const VRT: usize = NUM_SECTIONS;
+const NUM_SURFACE_SECTIONS: usize = NUM_SECTIONS + 1;
+
+/// The layer keys of a surface section (`VRT`: the virtual layers).
+fn keys(section: usize) -> &'static [&'static str] {
+    KEYS.get(section).copied().unwrap_or(&VIRTUAL_KEYS)
+}
+
 /// `$spill/name` while a section spills nothing.
 const SPILL_NAME: &str = "SPILL";
 /// `sel` of a layer without a WING key, and of a spill.
@@ -131,19 +152,19 @@ const BTN_MODES: [ModeRow<(i32, i32)>; 33] = [
     ("OFF", "NOT ASSIGNED", Some((0, -1))),
     ("MUTE", "CH MUTE", Some((1, -1))),
     ("SOLO", "CH SOLO", Some((2, -1))),
-    ("INS1", "CH INSERT PRE ON/OFF", None),
-    ("INS2", "CH INSERT POST ON/OFF", None),
+    ("INS1", "CH INSERT PRE ON/OFF", Some((INSERT_PRE_CATEGORY, -1))),
+    ("INS2", "CH INSERT POST ON/OFF", Some((INSERT_POST_CATEGORY, -1))),
     ("MGRP", "MUTE GROUP", Some((4, -1))),
     ("DCAMUTE", "DCA MUTE", Some((3, -1))),
     ("SOF", "SENDS ON FDR", Some((5, -1))),
     ("SPILL", "FADER SPILL", Some((12, -1))),
-    ("FXPAR", "FX PAR", None),
+    ("FXPAR", "FX PAR", Some((FX_PARAMETER_CATEGORY, -1))),
     ("DAWBTN", "DAW BUTTONS", Some((13, -1))),
     ("DAWENC", "DAW V-POTS", None),
     ("CHPAGE", "CH PAGE", Some((6, -1))),
     ("PAGE", "GLOBAL PAGE", Some((7, -1))),
     ("FDRPAGE", "FADER PAGE", Some((8, -1))),
-    ("VIEWPAGE", "OVERVIEW PAGE", None),
+    ("VIEWPAGE", "OVERVIEW PAGE", Some((OVERVIEW_PAGE_CATEGORY, -1))),
     ("OTHER", "OTHER", Some((11, -1))),
     ("GPIO", "GPIO", Some((17, -1))),
     ("FSTART", "FADER START", None),
@@ -163,13 +184,9 @@ const BTN_MODES: [ModeRow<(i32, i32)>; 33] = [
     ("MARKERB", "SD-2 MARKER", None),
 ];
 const MIDI_CATEGORY: i32 = 14;
-/// CC BANK (3.0.6) is the WING's OTHER > CCBANK.
-const CC_BANK_CATEGORY: i32 = 18;
 const OTHER_MODE: usize = 16;
 /// The upper part's layers (`sel`).
 const NUM_BANKS: i32 = 16;
-/// The 4-Channel section's U1 layer (the full-size console's `U1`-`U3`).
-const FOUR_CHANNEL_LAYER: usize = 17;
 
 // ---- bindings ------------------------------------------------------------------------
 
@@ -211,12 +228,15 @@ pub enum UserF {
     Mode(u8, u8, CcSlot),
     Name(u8, u8),
     FName(u8, u8, CcSlot),
+    /// The `enc`, `bu` or `bd` node itself (its mode's own nodes are the
+    /// schema's model parameters).
+    Slot(u8, u8, CcSlot),
 }
 
 /// Binds `/$ctl/layer/<rest>`.
 pub fn bind_layer(rest: &[&str]) -> Option<(u8, LayerF)> {
     let (section, rest) = rest.split_first()?;
-    let s = ["L", "C", "R"].iter().position(|n| n == section)?;
+    let s = ["L", "C", "R", "VRT"].iter().position(|n| n == section)?;
     let number = |p: &str, max: usize| p.parse::<usize>().ok().filter(|n| (1..=max).contains(n)).map(|n| (n - 1) as u8);
     let field = |f: &str| match f {
         "type" => Some(FaderField::Type),
@@ -224,7 +244,7 @@ pub fn bind_layer(rest: &[&str]) -> Option<(u8, LayerF)> {
         "dst" => Some(FaderField::Dest),
         _ => None,
     };
-    let keys = KEYS[s].len();
+    let keys = keys(s).len();
     let f = match rest {
         ["sel"] => LayerF::Sel,
         ["spidx"] => LayerF::SpillIndex,
@@ -250,7 +270,7 @@ pub fn bind_user(rest: &[&str]) -> Option<UserF> {
     let set =
         |l: &str, prefix: &str| l.strip_prefix(prefix)?.parse::<usize>().ok().filter(|n| (1..=NUM_COMPACT_SETS).contains(n));
     let layer = match *layer {
-        "user" => 16,
+        "user" => USER_LAYER,
         "MM" => COMPACT_MAIN_MATRIX_LAYER,
         l if l.starts_with("daw") => FIRST_DAW_LAYER + l[3..].parse::<usize>().ok().filter(|n| (1..=4).contains(n))? - 1,
         l if l.starts_with('U') => FIRST_COMPACT_USER_LAYER + set(l, "U")? - 1,
@@ -263,8 +283,15 @@ pub fn bind_user(rest: &[&str]) -> Option<UserF> {
     // The lower part's layers (USER, DAW 1-4) have no colour; only they and
     // the upper part's layers have a lower key.
     let lower_part = layer == 16 || (FIRST_DAW_LAYER..FIRST_COMPACT_USER_LAYER).contains(&(layer as usize));
+    let slot_of = |slot: &str| match slot {
+        "enc" if (layer as i32) < NUM_BANKS => Some(CcSlot::Enc),
+        "bu" => Some(CcSlot::Up),
+        "bd" if (layer as i32) < NUM_BANKS || lower_part => Some(CcSlot::Down),
+        _ => None,
+    };
     Some(match tail {
         ["col"] if !lower_part => UserF::Colour(layer, control),
+        [slot] => UserF::Slot(layer, control, slot_of(slot)?),
         [slot, f] => {
             let cs = match *slot {
                 "enc" if (layer as i32) < NUM_BANKS => CcSlot::Enc,
@@ -281,39 +308,6 @@ pub fn bind_user(rest: &[&str]) -> Option<UserF> {
         }
         _ => return None,
     })
-}
-
-impl UserF {
-    fn layer(self) -> Option<u8> {
-        match self {
-            UserF::Bank => None,
-            UserF::Colour(l, _) | UserF::Mode(l, _, _) | UserF::Name(l, _) | UserF::FName(l, _, _) => Some(l),
-        }
-    }
-
-    fn with_layer(self, layer: u8) -> Self {
-        match self {
-            UserF::Bank => self,
-            UserF::Colour(_, c) => UserF::Colour(layer, c),
-            UserF::Mode(_, c, s) => UserF::Mode(layer, c, s),
-            UserF::Name(_, c) => UserF::Name(layer, c),
-            UserF::FName(_, c, s) => UserF::FName(layer, c, s),
-        }
-    }
-
-    /// The node on a console of `model`. The COMPACT's key sets are its own
-    /// (WING Edit's CC EDIT offers USER 1-4 .. DCA 13-16 for the COMPACT
-    /// only); the full-size console keeps what it had: `U1`-`U3` the
-    /// 4-Channel section's F1-F3 layers, `U4`, `MM` and `D1`-`D4` the factory
-    /// values (None: unbound).
-    pub fn for_model(self, model: ConsoleModel) -> Option<Self> {
-        let Some(layer) = self.layer().map(usize::from) else { return Some(self) };
-        if model == ConsoleModel::Compact || layer < FIRST_COMPACT_USER_LAYER {
-            return Some(self);
-        }
-        (layer < FIRST_COMPACT_USER_LAYER + 3)
-            .then(|| self.with_layer((layer - FIRST_COMPACT_USER_LAYER + FOUR_CHANNEL_LAYER) as u8))
-    }
 }
 
 // ---- the published surface -----------------------------------------------------------
@@ -360,13 +354,15 @@ pub struct SurfaceSection {
 pub struct SurfaceControl {
     /// The encoder's, upper and lower key's functions as `mode` items.
     pub modes: [&'static str; 3],
+    /// ... and as Sidecar's functions (their targets and options).
+    pub functions: [CcFunction; 3],
     pub name: String,
     pub colour: i32,
 }
 
 impl Default for SurfaceControl {
     fn default() -> Self {
-        Self { modes: ["OFF"; 3], name: String::new(), colour: 0 }
+        Self { modes: ["OFF"; 3], functions: Default::default(), name: String::new(), colour: 0 }
     }
 }
 
@@ -375,11 +371,14 @@ impl Default for SurfaceControl {
 pub struct Surface {
     /// A host applies the edits (else the nodes are shadow).
     pub attached: bool,
-    pub sections: [SurfaceSection; NUM_SECTIONS],
+    /// L, C, R and VRT.
+    pub sections: [SurfaceSection; NUM_SURFACE_SECTIONS],
     /// `CustomControls`' layers.
     pub controls: Vec<[SurfaceControl; NUM_CONTROLS]>,
     /// The upper part's layer, 0-15.
     pub cc_bank: i32,
+    /// The strips' WING numbers (custom control functions name strips 1-76).
+    num: Numbering,
 }
 
 /// A change a client made, for the host to apply to the show.
@@ -402,17 +401,23 @@ pub enum SurfaceEdit {
         user: usize,
         name: String,
     },
+    /// A virtual layer's (0-7) name.
+    RenameVirtual {
+        index: usize,
+        name: String,
+    },
     Fader {
         section: usize,
         key: usize,
         pos: usize,
         fader: WingFader,
     },
-    Mode {
+    /// A key's or encoder's function: a new mode or a new target or option.
+    Function {
         layer: usize,
         index: usize,
         slot: CcSlot,
-        mode: &'static str,
+        function: CcFunction,
     },
     Name {
         layer: usize,
@@ -503,7 +508,7 @@ impl Surface {
         let int = v.as_i32().unwrap_or(0);
         Ok(match f {
             LayerF::Sel => {
-                let key = usize::try_from(int - 1).ok().filter(|&k| k < KEYS[section].len());
+                let key = usize::try_from(int - 1).ok().filter(|&k| k < keys(section).len());
                 key.map(|key| {
                     sec.sel = int;
                     sec.spill = 0;
@@ -511,6 +516,8 @@ impl Surface {
                     SurfaceEdit::Select { section, key }
                 })
             }
+            // The virtual section doesn't spill here.
+            LayerF::SpillIndex if section == VRT => None,
             LayerF::SpillIndex => spill_kind(int, None).map(|_| {
                 sec.spill = int;
                 sec.sel = if int == 0 { sec.sel } else { SEL_SPILL };
@@ -524,11 +531,13 @@ impl Surface {
                 sec.offset = int.max(0);
                 SurfaceEdit::Offset { section, offset: int.max(0) }
             }),
+            LayerF::Name(k) if section == VRT => {
+                let name = text(v);
+                sec.keys[k as usize].name.clone_from(&name);
+                Some(SurfaceEdit::RenameVirtual { index: k as usize, name })
+            }
             LayerF::Name(k) => user_key(KEYS[section][k as usize]).map(|user| {
-                let name = match v {
-                    Value::Str(s) => s.clone(),
-                    other => other.as_i32().unwrap_or(0).to_string(),
-                };
+                let name = text(v);
                 sec.keys[k as usize].name.clone_from(&name);
                 SurfaceEdit::RenameUser { user, name }
             }),
@@ -570,6 +579,7 @@ impl Surface {
                 let mode = control(l, c)?.modes[cc_slot_index(slot)];
                 Value::str(if mode == "OFF" { "" } else { mode_long_name(slot, mode) })
             }
+            UserF::Slot(..) => return None,
         })
     }
 
@@ -584,6 +594,7 @@ impl Surface {
             return Err(SetError::NotFound);
         };
         let (layer, index) = (l as usize, c as usize);
+        let num = &self.num;
         let control = self.controls.get_mut(layer).and_then(|l| l.get_mut(index)).ok_or(SetError::NotFound)?;
         Ok(Some(match f {
             UserF::Colour(..) => {
@@ -605,8 +616,12 @@ impl Surface {
                     Some((mode, false)) => return Err(SetError::Unsupported(format!("no {mode} function here"))),
                     None => return Err(SetError::BadValue),
                 };
-                control.modes[cc_slot_index(slot)] = mode;
-                SurfaceEdit::Mode { layer, index, slot, mode }
+                // Shown at once: the mode's own nodes follow it.
+                let i = cc_slot_index(slot);
+                let function = new_function(num, slot, mode, control.functions[i]).ok_or(SetError::BadValue)?;
+                control.modes[i] = mode;
+                control.functions[i] = function;
+                SurfaceEdit::Function { layer, index, slot, function }
             }
             UserF::Name(..) => {
                 control.name = match v {
@@ -620,10 +635,297 @@ impl Surface {
     }
 }
 
+impl Surface {
+    /// A custom control function node's value: position `index` (1-based)
+    /// of the mode of `slot` of control `c` of layer `l` (None: one Sidecar
+    /// has no equivalent for).
+    pub fn get_cc_param(&self, l: u8, c: u8, slot: CcSlot, index: u8) -> Option<Value> {
+        let control = self.controls.get(l as usize)?.get(c as usize)?;
+        let i = cc_slot_index(slot);
+        let (mode, f) = (control.modes[i], control.functions[i]);
+        if slot == CcSlot::Enc {
+            encoder_param(&self.num, mode, &f, index)
+        } else {
+            key_param(&self.num, mode, &f, index)
+        }
+    }
+
+    /// A client sets a custom control function node (`v` coerced): the
+    /// function's new target or option. Ok(None): kept as a value only.
+    pub fn set_cc_param(&mut self, l: u8, c: u8, slot: CcSlot, index: u8, v: &Value) -> Result<Option<SurfaceEdit>, SetError> {
+        let num = &self.num;
+        let control = self.controls.get_mut(l as usize).and_then(|l| l.get_mut(c as usize)).ok_or(SetError::NotFound)?;
+        let i = cc_slot_index(slot);
+        let (mode, f) = (control.modes[i], control.functions[i]);
+        let new =
+            if slot == CcSlot::Enc { set_encoder_param(num, mode, f, index, v)? } else { set_key_param(num, mode, f, index, v)? };
+        let Some(function) = new else { return Ok(None) };
+        control.functions[i] = function;
+        Ok(Some(SurfaceEdit::Function { layer: l as usize, index: c as usize, slot, function }))
+    }
+}
+
+// ---- custom control function nodes -----------------------------------------------------
+
+fn text(v: &Value) -> String {
+    match v {
+        Value::Str(s) => s.clone(),
+        other => other.as_i32().unwrap_or(0).to_string(),
+    }
+}
+
+/// "FX3" -> 3 (the number after `prefix`).
+fn numbered(v: &Value, prefix: &str) -> Option<i32> {
+    text(v).strip_prefix(prefix)?.parse().ok()
+}
+
+fn strip_ref(target: i32) -> StripRef {
+    StripRef::new(StripKind::from_i32(target / 100_000).unwrap_or(StripKind::Channel), target % 100_000)
+}
+
+/// A function's strip as the WING's number (1-76).
+fn strip_number(num: &Numbering, target: i32) -> i32 {
+    num.number(&strip_ref(target)).unwrap_or(1)
+}
+
+/// The WING's strip number as a function's strip.
+fn strip_target(num: &Numbering, n: i32) -> Result<i32, SetError> {
+    num.strip(n).map(|r| r.kind as i32 * 100_000 + r.id).ok_or_else(|| SetError::Unsupported(format!("no strip {n} here")))
+}
+
+/// CH PAGE: Sidecar's pages (HOME, INPUT, FILTER, GATE, EQ, DYNAMICS,
+/// INSERT PRE, INSERT POST, MAIN, SENDS) as the WING's `pg` items.
+const CH_PAGES: [&str; 10] = ["HOME", "INPUT", "FILT", "GATE", "EQ", "DYN", "INS1", "INS2", "MAIN", "SEND"];
+/// GLOBAL PAGE: Sidecar's screens (HOME, EFFECTS, METERS, ROUTING, SETUP,
+/// LIBRARY, MIXER, FADER and SENDS VIEW, FADER LAYER, MUTE GROUPS, WING
+/// LIVE, CUSTOM CONTROLS, MONITOR) as `pg` items; HOME has none (answers FX).
+const GLOBAL_PAGES: [&str; 14] =
+    ["FX", "FX", "MTRS", "CHINS", "SETUP", "LIB", "MIXV", "FDRV", "SENDV", "LAYER", "MGRP", "WLIVE", "CUSTCTL", "MON"];
+const SHOW_ACTIONS: [&str; 5] = ["GO", "PREV", "NEXT", "GOPREV", "GONEXT"];
+/// USB PLAY/REC: Sidecar's keys (PLAY, PAUSE, STOP, PREV, NEXT, REC, REC
+/// PAUSE, REC STOP, NEW FILE, REPEAT) as `usbpr` items (REPEAT has none).
+const USB_KEYS: [&str; 10] = ["PLAY", "PPAUSE", "PSTOP", "PPREV", "PNEXT", "RECORD", "RPAUSE", "RSTOP", "RNEW", "PLAY"];
+const AREAS: [&str; 7] = ["L", "C", "R", "CMPCT", "RCK", "EXT", "VRT"];
+/// OTHER: Sidecar's functions (custom.rs `other`) as `other` items (SOF
+/// OFF has none: TBA).
+const OTHER_ITEMS: [&str; other::COUNT as usize] = [
+    "MONDIM", "MONMONO", "MONSWAP", "MONMUTE", "FDROFF", "FDR-10DB", "FDR0DB", "AUTOX", "AUTOY", "CHPREV", "CHNEXT", "CCBANK",
+    "CCBANK", "TBA", "TBA", "TBB", "ALTSRC", "DAWSW", "MONA", "MONB", "MONAB", "CHSOLO", "BUSSOLO", "MAINSOLO", "MTXSOLO",
+    "CHMTR", "BUSMTR", "MAINMTR", "MTXMTR", "DCAMTR",
+];
+/// MON: Sidecar's options (MONITOR LEVEL, DIM AMOUNT, PHONES LEVEL) as `mon`.
+const MONITOR_ITEMS: [&str; 3] = ["B", "B", "A"];
+
+fn midi_type(mode: &str) -> Option<i32> {
+    BTN_MODES.iter().find(|m| m.0 == mode).and_then(|m| m.2).filter(|(cat, _)| *cat == MIDI_CATEGORY).map(|(_, sub)| sub)
+}
+
+fn key_param(num: &Numbering, mode: &str, f: &CcFunction, index: u8) -> Option<Value> {
+    let item = |s: &str| Some(Value::str(s));
+    Some(match (mode, index) {
+        ("MUTE" | "SOLO" | "INS1" | "INS2" | "SOF", 1) => Value::Int(strip_number(num, f.target)),
+        ("MGRP", 1) => Value::Str(format!("MGRP.{}", f.target + 1)),
+        ("DCAMUTE", 1) => Value::Int(f.target + 1),
+        // Sidecar spills to the left section (as the screens' SPILL keys).
+        ("SPILL", 1) => return item("L"),
+        ("SPILL", 2) => {
+            let (kind, i) = (f.target / 100, f.target % 100 + 1);
+            Value::Str(match kind {
+                0 => format!("DCA{i}"),
+                1 => format!("BUS{i}"),
+                2 => format!("FX{i}"),
+                3 => (if i == 1 { "AUTOX" } else { "AUTOY" }).into(),
+                4 => "SELCH".into(),
+                _ => format!("MAIN{i}"),
+            })
+        }
+        ("FXPAR", 1) => Value::Str(format!("FX{}", f.target + 1)),
+        ("FXPAR", 2) => Value::Int(if f.option < 0 { 41 } else { f.option + 1 }),
+        ("DAWBTN", 1) => return Some(Value::Int(f.option)).and_then(|_| daw_button_item(f.option)),
+        ("CHPAGE", 1) => Value::Int(strip_number(num, f.target)),
+        ("CHPAGE", 2) => return item(CH_PAGES.get(f.option as usize).copied().unwrap_or("HOME")),
+        ("PAGE", 1) => return item(GLOBAL_PAGES.get(f.option as usize).copied().unwrap_or("FX")),
+        ("FDRPAGE", 1) => return item(AREAS.get(f.target as usize).copied().unwrap_or("L")),
+        ("VIEWPAGE", 1) => return item(AREAS.get(f.target as usize).copied().unwrap_or("L")),
+        ("FDRPAGE" | "VIEWPAGE", 2) => Value::Int(f.option + 1),
+        ("OTHER", 1) if f.category == CC_BANK_CATEGORY => return item("CCBANK"),
+        ("OTHER", 1) => return item(OTHER_ITEMS.get(f.option as usize).copied().unwrap_or("TBA")),
+        ("OTHER", 2) => Value::Str(match (f.category, f.option) {
+            (CC_BANK_CATEGORY, bank) => (bank + 1).to_string(),
+            (_, other::CC_BANK_DOWN) => "-1".into(),
+            _ => "+1".into(),
+        }),
+        ("SHOWCTL", 1) => return item(SHOW_ACTIONS.get(f.option as usize).copied().unwrap_or("GO")),
+        ("SCENES", 1) => Value::Int(f.target.max(1)),
+        ("MIDICCT" | "MIDICCP" | "MIDINT" | "MIDINP" | "MIDIPGM", 1) => Value::Int(f.target % 16 + 1),
+        ("MIDIPGM", 2) => Value::Int(f.option.clamp(0, 127) + 1),
+        ("MIDICCT" | "MIDICCP" | "MIDINT" | "MIDINP", 2) => Value::Int(f.option.clamp(0, 127)),
+        // Sidecar's MIDI keys send 127 (and 0).
+        ("MIDICCT" | "MIDICCP" | "MIDINT" | "MIDINP", 3) => Value::Int(127),
+        ("USBPR", 1) => return item(USB_KEYS.get(f.option as usize).copied().unwrap_or("PLAY")),
+        _ => return None,
+    })
+}
+
+/// The `btn` item of DAW BUTTONS command `option` (T1 .. SP6, in order).
+fn daw_button_item(option: i32) -> Option<Value> {
+    const GROUPS: [(&str, i32); 10] =
+        [("T", 20), ("N", 9), ("A", 16), ("F", 8), ("V", 15), ("AU", 12), ("SY", 10), ("OT", 12), ("E", 10), ("SP", 6)];
+    let mut first = 0;
+    for (prefix, count) in GROUPS {
+        if option < first + count {
+            return (option >= first).then(|| Value::Str(format!("{prefix}{}", option - first + 1)));
+        }
+        first += count;
+    }
+    None
+}
+
+fn set_key_param(num: &Numbering, mode: &str, f: CcFunction, index: u8, v: &Value) -> Result<Option<CcFunction>, SetError> {
+    let int = v.as_i32().unwrap_or(0);
+    let unsupported = || SetError::Unsupported(format!("no {mode} {} here", text(v)));
+    let with_target = |target| Ok(Some(CcFunction { target, ..f }));
+    let with_option = |option| Ok(Some(CcFunction { option, ..f }));
+    let position = |list: &[&str]| list.iter().position(|i| *i == text(v)).map(|i| i as i32);
+    match (mode, index) {
+        ("MUTE" | "SOLO" | "INS1" | "INS2" | "SOF" | "CHPAGE", 1) => with_target(strip_target(num, int)?),
+        ("MGRP", 1) => with_target(numbered(v, "MGRP.").filter(|n| (1..=8).contains(n)).ok_or(SetError::BadValue)? - 1),
+        ("DCAMUTE", 1) => with_target(int.clamp(1, 16) - 1),
+        ("SPILL", 2) => {
+            let t = text(v);
+            let n = |p| numbered(v, p).map(|n| n - 1);
+            let target = match t.as_str() {
+                "AUTOX" => 300,
+                "AUTOY" => 301,
+                "SELCH" => 400,
+                _ if t.starts_with("DCA") => n("DCA").ok_or(SetError::BadValue)?,
+                _ if t.starts_with("FX") => 200 + n("FX").ok_or(SetError::BadValue)?,
+                _ if t.starts_with("BUS") => 100 + n("BUS").ok_or(SetError::BadValue)?,
+                _ if t.starts_with("MAIN") => 500 + n("MAIN").ok_or(SetError::BadValue)?,
+                // Sidecar has no matrix spill, and no spill of the active channel.
+                _ => return Err(unsupported()),
+            };
+            Ok(Some(CcFunction { category: FADER_SPILL_CATEGORY, target, option: 0 }))
+        }
+        ("FXPAR", 1) => with_target(numbered(v, "FX").filter(|n| (1..=16).contains(n)).ok_or(SetError::BadValue)? - 1),
+        ("FXPAR", 2) => with_option(if int >= 41 { -1 } else { int.max(1) - 1 }),
+        ("DAWBTN", 1) => {
+            let option =
+                (0..118).find(|&o| daw_button_item(o).as_ref() == Some(&Value::Str(text(v)))).ok_or(SetError::BadValue)?;
+            Ok(Some(CcFunction { target: daw_command_group(option), option, ..f }))
+        }
+        ("CHPAGE", 2) => with_option(if text(v) == "SND.EQ" { 9 } else { position(&CH_PAGES).ok_or(SetError::BadValue)? }),
+        ("PAGE", 1) => match text(v).as_str() {
+            "SRC" | "OUTS" => with_option(3),
+            "2TRK" => Err(unsupported()),
+            _ => with_option(position(&GLOBAL_PAGES[1..]).ok_or(SetError::BadValue)? + 1),
+        },
+        ("FDRPAGE", 1) => match text(v).as_str() {
+            "L" | "CMPCT" => with_target(0),
+            "C" | "VRT" => with_target(1),
+            "R" => with_target(2),
+            _ => Err(unsupported()),
+        },
+        ("VIEWPAGE", 1) => with_target(position(&AREAS).ok_or(SetError::BadValue)?),
+        ("FDRPAGE" | "VIEWPAGE", 2) => with_option(int.clamp(1, 21) - 1),
+        ("OTHER", 1) => {
+            let t = text(v);
+            if t == "CCBANK" {
+                return Ok(Some(match f.category {
+                    CC_BANK_CATEGORY => f,
+                    _ => CcFunction { category: OTHER_CATEGORY, target: 0, option: other::CC_BANK_UP },
+                }));
+            }
+            // The first of Sidecar's functions with that item (TBA: TALKBACK A, not SOF OFF).
+            let option = OTHER_ITEMS
+                .iter()
+                .enumerate()
+                .position(|(i, o)| *o == t && i as i32 != other::SOF_OFF)
+                .ok_or(SetError::BadValue)?;
+            Ok(Some(CcFunction { category: OTHER_CATEGORY, target: 0, option: option as i32 }))
+        }
+        ("OTHER", 2) => {
+            if f.category == OTHER_CATEGORY && !matches!(f.option, other::CC_BANK_UP | other::CC_BANK_DOWN) {
+                return Ok(None); // CCBK counts only with CCBANK
+            }
+            Ok(Some(match text(v).as_str() {
+                "-1" => CcFunction { category: OTHER_CATEGORY, target: 0, option: other::CC_BANK_DOWN },
+                "+1" => CcFunction { category: OTHER_CATEGORY, target: 0, option: other::CC_BANK_UP },
+                n => CcFunction {
+                    category: CC_BANK_CATEGORY,
+                    target: 0,
+                    option: n.parse::<i32>().map_err(|_| SetError::BadValue)?.clamp(1, 16) - 1,
+                },
+            }))
+        }
+        ("SHOWCTL", 1) => with_option(position(&SHOW_ACTIONS).ok_or(SetError::BadValue)?),
+        ("SCENES", 1) => with_target(int.clamp(1, 128)),
+        ("MIDICCT" | "MIDICCP" | "MIDINT" | "MIDINP" | "MIDIPGM", 1) => {
+            with_target(midi_type(mode).unwrap_or(0) * 16 + int.clamp(1, 16) - 1)
+        }
+        ("MIDIPGM", 2) => with_option(int.clamp(1, 128) - 1),
+        ("MIDICCT" | "MIDICCP" | "MIDINT" | "MIDINP", 2) => with_option(int.clamp(0, 127)),
+        ("USBPR", 1) => with_option(position(&USB_KEYS).ok_or(SetError::BadValue)?),
+        _ => Ok(None),
+    }
+}
+
+fn encoder_param(num: &Numbering, mode: &str, f: &CcFunction, index: u8) -> Option<Value> {
+    Some(match (mode, index) {
+        ("FDR" | "PAN" | "FSND", 1) => Value::Int(strip_number(num, f.target)),
+        ("DCA", 1) => Value::Int(f.target + 1),
+        ("SSND", 1) => Value::Str(format!("BUS{}", f.target + 1)),
+        ("FSND", 2) => Value::Str(format!("BUS{}", f.option + 1)),
+        ("FX", 1) => Value::Str(format!("FX{}", f.target + 1)),
+        ("FX", 2) => Value::Int(if f.option < 0 { 41 } else { f.option + 1 }),
+        ("DAWMCU", 1) => Value::Str(match f.target {
+            t @ 0..=7 => format!("M{}", t + 1),
+            t @ 8..=23 => format!("E{}", t - 7),
+            _ => "JOG".into(),
+        }),
+        ("MON", 1) => Value::str(MONITOR_ITEMS.get(f.option as usize).copied().unwrap_or("B")),
+        ("MIDICC", 1) => Value::Int(f.target + 1),
+        ("MIDICC", 2) => Value::Int(f.option),
+        _ => return None,
+    })
+}
+
+fn set_encoder_param(num: &Numbering, mode: &str, f: CcFunction, index: u8, v: &Value) -> Result<Option<CcFunction>, SetError> {
+    let int = v.as_i32().unwrap_or(0);
+    let with_target = |target| Ok(Some(CcFunction { target, ..f }));
+    let with_option = |option| Ok(Some(CcFunction { option, ..f }));
+    let bus = || match numbered(v, "BUS") {
+        Some(n) if (1..=16).contains(&n) => Ok(n - 1),
+        _ => Err(SetError::Unsupported(format!("no send to {} here (buses only)", text(v)))),
+    };
+    match (mode, index) {
+        ("FDR" | "PAN" | "FSND", 1) => with_target(strip_target(num, int)?),
+        ("DCA", 1) => with_target(int.clamp(1, 16) - 1),
+        ("SSND", 1) => with_target(bus()?),
+        ("FSND", 2) => with_option(bus()?),
+        ("FX", 1) => with_target(numbered(v, "FX").filter(|n| (1..=16).contains(n)).ok_or(SetError::BadValue)? - 1),
+        ("FX", 2) => with_option(if int >= 41 { -1 } else { int.max(1) - 1 }),
+        ("DAWMCU", 1) => {
+            let t = text(v);
+            with_target(match (numbered(v, "M"), numbered(v, "E")) {
+                _ if t == "JOG" => 24,
+                (Some(m), _) => m.clamp(1, 8) - 1,
+                (_, Some(e)) => e.clamp(1, 16) + 7,
+                _ => return Err(SetError::BadValue),
+            })
+        }
+        ("MON", 1) => with_option(if text(v) == "A" { 2 } else { 0 }),
+        ("MIDICC", 1) => with_target(int.clamp(1, 16) - 1),
+        ("MIDICC", 2) => with_option(int.clamp(0, 127)),
+        _ => Ok(None),
+    }
+}
+
 // ---- the show in the WING's terms ----------------------------------------------------
 
 /// The WING's 76 strips numbered as in its strip order: channels 1-40, aux
 /// 41-48, buses 49-64, mains 65-68, matrices 69-76.
+#[derive(Clone, Debug, Default, PartialEq)]
 struct Numbering {
     strips: Vec<(StripRef, i32)>,
 }
@@ -665,10 +967,11 @@ impl Numbering {
                 None => WingFader::OFF,
             },
             FaderRef::Dca(i) => w(T_DCA, i + 1, 1),
-            FaderRef::Send { from, to } => match (self.number(&from), self.number(&to)) {
+            FaderRef::Send { from, to } | FaderRef::BusSend { from, to } => match (self.number(&from), self.number(&to)) {
                 (Some(i), Some(d)) if d > 48 => w(T_SEND, i, d - 48),
                 _ => WingFader::OFF,
             },
+            FaderRef::SelSend { .. } => WingFader::OFF,
             FaderRef::FxParam { slot, param } => w(T_FX, slot + 1, param + 1),
             FaderRef::MidiCc { channel, cc } => w(T_MIDI, cc, channel + 1),
         }
@@ -738,6 +1041,9 @@ pub fn publish(engine: &Engine, layers: &LayerSet, custom: &CustomControls, cc_b
     let num = Numbering::of(engine);
     let console = ConsoleRefs::of(engine);
     let sections = std::array::from_fn(|s| {
+        if s == VRT {
+            return publish_virtual(layers, &num);
+        }
         let defaults = layers.default_layers_for(s, &console);
         let keys = KEYS[s]
             .iter()
@@ -778,13 +1084,28 @@ pub fn publish(engine: &Engine, layers: &LayerSet, custom: &CustomControls, cc_b
                 let c = custom.control(l, i).cloned().unwrap_or_default();
                 SurfaceControl {
                     modes: [enc_mode(&c.encoder), btn_mode(&c.upper), btn_mode(&c.lower)],
+                    functions: [c.encoder, c.upper, c.lower],
                     name: c.name,
                     colour: c.colour,
                 }
             })
         })
         .collect();
-    Surface { attached: true, sections, controls, cc_bank: cc_bank.clamp(0, NUM_BANKS - 1) }
+    Surface { attached: true, sections, controls, cc_bank: cc_bank.clamp(0, NUM_BANKS - 1), num }
+}
+
+/// `/$ctl/layer/VRT`: the virtual layers, and on a COMPACT its VIRTUAL
+/// section's selection and scroll position.
+fn publish_virtual(layers: &LayerSet, num: &Numbering) -> SurfaceSection {
+    let compact = layers.model().is_compact();
+    let selected = layers.selected(VIRTUAL_SECTION);
+    SurfaceSection {
+        sel: if compact { VIRTUAL_KEYS.iter().position(|k| *k == selected).map_or(1, |k| k as i32 + 1) } else { 1 },
+        spill: 0,
+        offset: if compact { layers.offset(VIRTUAL_SECTION) } else { 0 },
+        keys: (0..NUM_VIRTUAL_LAYERS).map(|i| layers.virtual_layer(i).map(|l| num.layer(&l)).unwrap_or_default()).collect(),
+        spill_layer: SurfaceLayer { name: SPILL_NAME.into(), ..SurfaceLayer::default() },
+    }
 }
 
 const USER_KEY_IDS: [&str; 2] = livedaw_session::layers::USER_KEYS;
@@ -809,8 +1130,10 @@ fn ensure_user_layer(layers: &mut LayerSet, user: usize) -> String {
 
 /// A function chosen by its WING `mode`: the current one if it is that
 /// function, else the function at its first target (as CC EDIT starts it).
-fn new_function(engine: &Engine, slot: CcSlot, mode: &str, old: CcFunction) -> Option<CcFunction> {
-    let first_strip = |kind: StripKind| engine.strips(kind).first().map_or(0, |s| kind as i32 * 100_000 + s.id());
+fn new_function(num: &Numbering, slot: CcSlot, mode: &str, old: CcFunction) -> Option<CcFunction> {
+    // CH 1 and BUS 1 by the WING's numbers.
+    let first_strip =
+        |kind: StripKind| num.strip(if kind == StripKind::Bus { 49 } else { 1 }).map_or(0, |r| r.kind as i32 * 100_000 + r.id);
     if slot == CcSlot::Enc {
         let cat = ENC_MODES.iter().find(|m| m.0 == mode)?.2?;
         if cat == old.category {
@@ -829,8 +1152,10 @@ fn new_function(engine: &Engine, slot: CcSlot, mode: &str, old: CcFunction) -> O
         return Some(old);
     }
     let (target, option) = match cat {
-        // MUTE, SOLO, CH PAGE: CH 1; SENDS ON FDR: the first bus; SCENE RECALL: #1.
-        1 | 2 | 6 => (first_strip(StripKind::Channel), 0),
+        // MUTE, SOLO, CH PAGE, INSERT PRE / POST: CH 1; SENDS ON FDR: the
+        // first bus; SCENE RECALL: #1; FX PAR: FX 1's MIX.
+        1 | 2 | 6 | INSERT_PRE_CATEGORY | INSERT_POST_CATEGORY => (first_strip(StripKind::Channel), 0),
+        FX_PARAMETER_CATEGORY => (0, -1),
         5 => (first_strip(StripKind::Bus), 0),
         10 => (1, 0),
         // A MIDI key keeps its channel and number.
@@ -844,8 +1169,11 @@ fn new_function(engine: &Engine, slot: CcSlot, mode: &str, old: CcFunction) -> O
 /// Applies a client's edit to the show.
 fn apply(engine: &Engine, layers: &mut LayerSet, custom: &mut CustomControls, edit: SurfaceEdit, r: &mut SyncResult) {
     match edit {
+        // The virtual section's selection and scroll position are the
+        // COMPACT's VIRTUAL section's (the full-size console has none).
+        SurfaceEdit::Select { section: VRT, .. } | SurfaceEdit::Offset { section: VRT, .. } if !layers.model().is_compact() => {}
         SurfaceEdit::Select { section, key } => {
-            let id = KEYS[section][key];
+            let (section, id) = if section == VRT { (VIRTUAL_SECTION, VIRTUAL_KEYS[key]) } else { (section, KEYS[section][key]) };
             if layers.shown(section) != id {
                 layers.select(section, id);
                 r.layers = true;
@@ -860,8 +1188,15 @@ fn apply(engine: &Engine, layers: &mut LayerSet, custom: &mut CustomControls, ed
             _ => {}
         },
         SurfaceEdit::Offset { section, offset } => {
+            let section = if section == VRT { VIRTUAL_SECTION } else { section };
             if layers.offset(section) != offset {
                 layers.set_offset(section, offset);
+                r.layers = true;
+            }
+        }
+        SurfaceEdit::RenameVirtual { index, name } => {
+            if layers.virtual_layer(index).is_some_and(|l| l.name != name) {
+                layers.rename_user_layer(VIRTUAL_KEYS[index], &name);
                 r.layers = true;
             }
         }
@@ -876,16 +1211,23 @@ fn apply(engine: &Engine, layers: &mut LayerSet, custom: &mut CustomControls, ed
         SurfaceEdit::Fader { section, key, pos, fader } => {
             let num = Numbering::of(engine);
             let Ok(new) = num.decode(fader) else { return };
-            let id = KEYS[section][key];
+            let id = keys(section)[key];
             let user = user_key(id);
             let current = match user {
                 Some(u) => layers.user_layers().get(u).map(|l| l.faders.clone()).unwrap_or_default(),
+                None if section == VRT => layers.virtual_layer(key).map(|l| l.faders).unwrap_or_default(),
                 None => {
                     let defaults = layers.default_layers_for(section, &ConsoleRefs::of(engine));
                     let Some(l) = defaults.into_iter().find(|l| l.id == id) else { return };
                     l.faders
                 }
             };
+            // What the slot already reads changes nothing: a selected
+            // channel's send (read as OFF) or a send with BUS CUSTOMIZATION
+            // (read as its SEND) written back as read stays what it is.
+            if num.encode(&slots::get(&current, pos)) == fader {
+                return;
+            }
             // Fixed slots: OFF blanks the slot, a fader past the end leaves
             // blanks before it; the other slots stay where they are.
             let mut faders = current.clone();
@@ -898,22 +1240,20 @@ fn apply(engine: &Engine, layers: &mut LayerSet, custom: &mut CustomControls, ed
                     let id = ensure_user_layer(layers, u);
                     layers.set_user_layer_faders(&id, faders);
                 }
-                None => layers.set_default_override(section, id, faders),
+                None => layers.set_default_override(if section == VRT { VIRTUAL_SECTION } else { section }, id, faders),
             }
             r.layers = true;
         }
-        SurfaceEdit::Mode { layer, index, slot, mode } => {
+        SurfaceEdit::Function { layer, index, slot, function } => {
             let Some(c) = custom.control_mut(layer, index) else { return };
             let f = match slot {
                 CcSlot::Enc => &mut c.encoder,
                 CcSlot::Up => &mut c.upper,
                 CcSlot::Down => &mut c.lower,
             };
-            if let Some(new) = new_function(engine, slot, mode, *f) {
-                if new != *f {
-                    *f = new;
-                    r.controls = true;
-                }
+            if function != *f {
+                *f = function;
+                r.controls = true;
             }
         }
         SurfaceEdit::Name { layer, index, name } => {

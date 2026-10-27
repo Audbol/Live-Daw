@@ -54,8 +54,6 @@ pub mod ext {
 /// The WING's channel and bus counts (this console can grow beyond them).
 pub const WING_CHANNELS: usize = 40;
 pub const WING_BUSES: usize = 16;
-/// Buses this console can feed from other buses (buses 9+ into buses 1-8).
-pub const BUS_TO_BUS_TARGETS: usize = 8;
 
 #[repr(i32)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -470,11 +468,11 @@ pub struct StripParams {
     /// Bit n = member of mute group n+1.
     pub mute_group_mask: AtomicU32,
 
-    /// Matrices: direct input from an input channel.
+    /// Matrices: DIRECT IN (manual 6.4; `/mtx/n/dir`), added to the matrix's sum.
     pub direct_on: AtomicBool,
     pub direct_invert: AtomicBool,
-    pub direct_pre: AtomicBool,
-    /// Index of the input channel (-1 = none).
+    /// ABI 19: index into `routing::MATRIX_DIRECT_INPUTS` (OFF, AES, MON.PH,
+    /// MON.SPK, MON.BUS); before, an input channel's index.
     pub direct_source: AtomicI32,
     pub direct_level_db: AtomicF32,
 
@@ -783,8 +781,7 @@ impl StripParams {
             mute_group_mask: AtomicU32::new(0),
             direct_on: AtomicBool::new(false),
             direct_invert: AtomicBool::new(false),
-            direct_pre: AtomicBool::new(false),
-            direct_source: AtomicI32::new(-1),
+            direct_source: AtomicI32::new(crate::routing::matrix_direct::OFF),
             direct_level_db: AtomicF32::new(livedaw_dsp::fader::FADER_MIN),
             colour: AtomicI32::new(default_colour(kind)),
             icon: AtomicI32::new(0),
@@ -903,7 +900,7 @@ pub struct FxParams {
     pub model: AtomicI32,
     /// The device's parameters, in its table order.
     pub values: [AtomicF32; MAX_FX_PARAMS],
-    /// ABI 19: the hardware outputs the slot's FX SEND feeds (WING FX SEND
+    /// ABI 21: the hardware outputs the slot's FX SEND feeds (WING FX SEND
     /// 2i+1 / 2i+2, ROUTING > OUTPUTS; -1 = none), as a strip's outputs. The
     /// EXT device's outboard insert sends there (manual 11.11 p. 164, SEND).
     pub send_left: AtomicI32,

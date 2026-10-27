@@ -501,8 +501,16 @@ fn native_get_set_definitions_and_notifications() {
     let (engine, server) = start();
     let mut a = Native::connect(&server);
     let mut b = Native::connect(&server);
-    std::thread::sleep(Duration::from_millis(150));
     let fdr = id("/ch/1/fdr");
+    // Both sessions are up once each has answered a get (a fixed pause was too
+    // short under ThreadSanitizer on CI: B missed A's set and only saw the
+    // poller's $fdr mirror).
+    for c in [&mut a, &mut b] {
+        let mut get = Native::select(fdr);
+        get.push(0xdc);
+        c.send(&get);
+        c.read_until_ends(1);
+    }
     // Set (float token), then get: d7 <id> <value> de.
     let mut req = Native::select(fdr);
     req.push(0xd5);

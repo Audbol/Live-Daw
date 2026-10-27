@@ -4,9 +4,9 @@
 
 use crate::session::{str_arg, LdString};
 use crate::{engine, guard, strip};
-use livedaw_engine::sources::{self, OscParams, SourceParams};
+use livedaw_engine::sources::{self, OscParams, SourceParams, UserPatchParams, UserSignalParams};
 use livedaw_engine::{Engine, Strip};
-use std::sync::atomic::Ordering::Relaxed;
+use std::sync::atomic::{AtomicI32, Ordering::Relaxed};
 
 fn source(e: &Engine, index: i32) -> Option<&SourceParams> {
     e.sources().get(usize::try_from(index).ok()?)
@@ -136,6 +136,76 @@ pub unsafe extern "C" fn ld_engine_dca_monitor_paths(e: *const Engine, dca: i32)
     engine(e).map_or(0, |e| e.dca_monitor_paths(dca.max(0) as usize))
 }
 
+// ---- routing (ABI 19; livedaw-engine routing.rs, sources.rs) ----------------------------
+
+/// USR 1-24, the user signals: what each copies (`*count` entries; shared memory).
+#[no_mangle]
+pub unsafe extern "C" fn ld_engine_user_signals(e: *const Engine, count: *mut i32) -> *const UserSignalParams {
+    let Some(e) = engine(e) else { return std::ptr::null() };
+    if let Some(c) = count.as_mut() {
+        *c = e.sources().user_signals().len() as i32;
+    }
+    e.sources().user_signals().as_ptr()
+}
+
+/// USR 25-56, the user patches: the external source each copies (`*count` entries).
+#[no_mangle]
+pub unsafe extern "C" fn ld_engine_user_patches(e: *const Engine, count: *mut i32) -> *const UserPatchParams {
+    let Some(e) = engine(e) else { return std::ptr::null() };
+    if let Some(c) = count.as_mut() {
+        *c = e.sources().user_patches().len() as i32;
+    }
+    e.sources().user_patches().as_ptr()
+}
+
+/// Patches user patch `n` (0-based) to an external source (an input index);
+/// anything else is OFF.
+#[no_mangle]
+pub unsafe extern "C" fn ld_source_set_user_patch(e: *const Engine, n: i32, source: i32) {
+    if let (Some(e), Ok(n)) = (engine(e), usize::try_from(n)) {
+        e.sources().set_user_patch(n, source);
+    }
+}
+
+/// ROUTING > OUTPUTS for sources: the source on each hardware output (-1
+/// none; `*count` entries, shared memory). The strips' own outputs are
+/// their `output_left` / `output_right`.
+#[no_mangle]
+pub unsafe extern "C" fn ld_engine_output_patch(e: *const Engine, count: *mut i32) -> *const AtomicI32 {
+    let Some(e) = engine(e) else { return std::ptr::null() };
+    if let Some(c) = count.as_mut() {
+        *c = e.output_patch().ports.len() as i32;
+    }
+    e.output_patch().ports.as_ptr()
+}
+
+/// Message thread: patches `source` (an input index; a bus, main or matrix
+/// signal goes to that strip's output) to hardware output `port`, replacing
+/// whatever fed it. False when the port can't be patched.
+#[no_mangle]
+pub unsafe extern "C" fn ld_engine_route_output_source(e: *const Engine, port: i32, source: i32) -> bool {
+    engine(e).is_some_and(|e| guard(false, || e.route_output_source(port, source)))
+}
+
+/// Message thread: nothing feeds hardware output `port` (strips, monitor
+/// paths and sources routed there are cleared).
+#[no_mangle]
+pub unsafe extern "C" fn ld_engine_clear_output(e: *const Engine, port: i32) {
+    if let Some(e) = engine(e) {
+        guard((), || e.clear_output(port));
+    }
+}
+
+/// The input index of a bus, main or matrix signal (kind as `StripKind`,
+/// 0-based number (a bus's slot), side 0 L / 1 R), -1 for none.
+#[no_mangle]
+pub extern "C" fn ld_strip_source_input(kind: i32, number: i32, side: i32) -> i32 {
+    match (livedaw_engine::StripKind::from_i32(kind), usize::try_from(number), usize::try_from(side)) {
+        (Some(k), Ok(n), Ok(s)) => livedaw_engine::routing::strip_source_input(k, n, s),
+        _ => -1,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -161,8 +231,25 @@ mod tests {
             ld_source_initialize(e, 4);
             assert!((*table.add(4)).is_default() || (*table.add(4)).mode.load(Relaxed) == 1);
 
-            // The oscillators: OSC 2 is the last source.
-            assert_eq!(ld_source_index(sources::OSC_SOURCE_BASE + 1), count - 1);
+            // The oscillators, then the USR group: USR 56 is the last source.
+            assert_eq!(ld_source_index(sources::OSC_SOURCE_BASE + 1), sources::OSC_SOURCE_INDEX as i32 + 1);
+            assert_eq!(ld_source_index(sources::USR_SOURCE_BASE + 55), count - 1);
+            let mut n = 0;
+            let usr = ld_engine_user_signals(e, &mut n);
+            assert_eq!((n, std::mem::size_of::<UserSignalParams>()), (24, 16), "UserSignalParams in livedaw_engine.h");
+            (*usr.add(3)).group.store(1, Relaxed);
+            assert_eq!((*e).sources().user_signals()[3].strip(), Some((livedaw_engine::StripKind::Channel, 1)));
+            let patches = ld_engine_user_patches(e, &mut n);
+            assert_eq!(n, 32);
+            ld_source_set_user_patch(e, 2, 7);
+            assert_eq!((*patches.add(2)).source.load(Relaxed), 7);
+            let outs = ld_engine_output_patch(e, &mut n);
+            assert_eq!(n as usize, livedaw_engine::routing::NUM_PATCH_OUTPUTS);
+            assert!(ld_engine_route_output_source(e, 4, 9));
+            assert_eq!((*outs.add(4)).load(Relaxed), 9);
+            ld_engine_clear_output(e, 4);
+            assert_eq!((*outs.add(4)).load(Relaxed), -1);
+            assert_eq!(ld_strip_source_input(2, 15, 1), livedaw_engine::routing::STRIP_SOURCE_BASE + 31);
             let osc = ld_engine_oscillators(e, &mut count);
             assert_eq!(count, 2);
             assert_eq!(std::mem::size_of::<OscParams>(), 12, "OscParams in livedaw_engine.h");

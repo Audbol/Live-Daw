@@ -22,8 +22,21 @@
 //!
 //! Source tags (SOURCES > TAGS): a source can belong to mute groups; it is
 //! muted while one of them is engaged (the WING's `/io/in/../tags` `#M1`...).
+//!
+//! The USER SIGNAL group (`USR`, input `USR_SOURCE_BASE + n`, manual 2.6
+//! "Internal Sources"): USR 1-24 are **User Signals**, mono copies of an
+//! input channel, aux, bus, main or matrix (PRE: its tap point, POST: after
+//! its processing; L, R or L+R of a stereo one); USR 25-56 are **User
+//! Patches**, mono copies of an external source (a port, a playback channel,
+//! the USB player). Both are sources like the others (MUTE, polarity, tags,
+//! and adjacent pairs as STEREO or MID/SIDE; no gain, as on the WING). User
+//! patches are processed with the other sources, before the channels; user
+//! signals once every strip has run: outputs take them in the same block,
+//! channels one block late (through a `ReturnRing`).
 
 use crate::atomic::AtomicF32;
+use crate::params::StripKind;
+use crate::routing::{ReturnRing, NUM_STRIP_SOURCES};
 use livedaw_dsp::generator::{generator_mode, SignalGenerator, GENERATOR_MODES};
 use livedaw_dsp::generator::{GENERATOR_FREQ_MAX_HZ, GENERATOR_FREQ_MIN_HZ, GENERATOR_LEVEL_MAX_DB, GENERATOR_LEVEL_MIN_DB};
 use livedaw_dsp::util::{apply_gain_ramp, db_to_gain, peak_level};
@@ -37,17 +50,149 @@ pub const NUM_HW_SOURCES: usize = 576;
 /// The oscillators (the OSC source group): OSC n is input `OSC_SOURCE_BASE + n - 1`.
 pub const NUM_OSCILLATORS: usize = 2;
 pub const OSC_SOURCE_BASE: i32 = 0x30000;
-/// Sources: the hardware ports, the playback channels, the USB PLAYER, then the oscillators.
-pub const NUM_SOURCES: usize = NUM_HW_SOURCES + NUM_PLAYBACK_CHANNELS + USB_CHANNELS + NUM_OSCILLATORS;
+/// The USER SIGNAL group (`USR`): 24 user signals, then 32 user patches.
+/// USR n is input `USR_SOURCE_BASE + n - 1`.
+pub const NUM_USER_SIGNALS: usize = 24;
+pub const NUM_USER_PATCHES: usize = 32;
+pub const NUM_USR_SOURCES: usize = NUM_USER_SIGNALS + NUM_USER_PATCHES;
+pub const USR_SOURCE_BASE: i32 = 0x50000;
+/// Sources: the hardware ports, the playback channels, the USB PLAYER, the
+/// oscillators, then the USR group.
+pub const NUM_SOURCES: usize = NUM_HW_SOURCES + NUM_PLAYBACK_CHANNELS + USB_CHANNELS + NUM_OSCILLATORS + NUM_USR_SOURCES;
 /// Table index of USB PLAYER 1.
 pub const USB_PLAYER_SOURCE_INDEX: usize = NUM_HW_SOURCES + NUM_PLAYBACK_CHANNELS;
 /// Table index of OSC 1.
 pub const OSC_SOURCE_INDEX: usize = USB_PLAYER_SOURCE_INDEX + USB_CHANNELS;
+/// Table index of USR 1 (the first user signal); USR 25 (the first user
+/// patch) is `USR_SOURCE_INDEX + NUM_USER_SIGNALS`.
+pub const USR_SOURCE_INDEX: usize = OSC_SOURCE_INDEX + NUM_OSCILLATORS;
 
 /// The oscillator an input index refers to, if any.
 pub fn osc_channel(input: i32) -> Option<usize> {
     let n = input.checked_sub(OSC_SOURCE_BASE)?;
     usize::try_from(n).ok().filter(|&n| n < NUM_OSCILLATORS)
+}
+
+/// The USR source (0-based: 0-23 user signals, 24-55 user patches) an
+/// input index refers to, if any.
+pub fn usr_channel(input: i32) -> Option<usize> {
+    let n = input.checked_sub(USR_SOURCE_BASE)?;
+    usize::try_from(n).ok().filter(|&n| n < NUM_USR_SOURCES)
+}
+
+/// Where each kind of internal signal sits in the pointer list the channels
+/// read besides the hardware ports (`SourceDsp::playback_ptrs`).
+pub(crate) mod internal {
+    use super::*;
+    pub const PLAYBACK: usize = 0;
+    pub const USB: usize = PLAYBACK + NUM_PLAYBACK_CHANNELS;
+    pub const OSC: usize = USB + USB_CHANNELS;
+    pub const USR: usize = OSC + NUM_OSCILLATORS;
+    pub const STRIP: usize = USR + NUM_USR_SOURCES;
+    pub const COUNT: usize = STRIP + NUM_STRIP_SOURCES;
+}
+
+/// An external source a user patch can copy (a hardware port, a playback
+/// channel or the USB player; not an oscillator, a user signal or a strip).
+pub fn is_external_source(input: i32) -> bool {
+    usize::try_from(input).is_ok_and(|p| p < NUM_HW_SOURCES)
+        || playback_channel(input).is_some()
+        || usb_player_channel(input).is_some()
+}
+
+/// A user signal's SOURCE group (`/io/in/USR/n/user/grp`, USR 1-24).
+pub const USER_SIGNAL_GROUPS: [&str; 6] = ["OFF", "CH", "AUX", "BUS", "MAIN", "MTX"];
+/// A user signal's side of a stereo strip (`user/lr`): L+R (the two sides
+/// mixed, each at half), L or R.
+pub const USER_SIGNAL_SIDES: [&str; 3] = ["L+R", "L", "R"];
+/// Where a user signal takes its strip (`user/tap`): PRE (the tap point:
+/// pre-fader, an input channel's TAP point) or POST (after the processing).
+pub const USER_SIGNAL_TAPS: [&str; 2] = ["PRE", "POST"];
+
+pub mod user_side {
+    pub const BOTH: i32 = 0;
+    pub const LEFT: i32 = 1;
+    pub const RIGHT: i32 = 2;
+}
+
+/// One user signal (USR 1-24), shared with the UI (`ld_engine_user_signals`).
+#[repr(C)]
+#[derive(Debug)]
+pub struct UserSignalParams {
+    /// Index into [`USER_SIGNAL_GROUPS`] (0 = OFF).
+    pub group: AtomicI32,
+    /// The strip's number, 1-based (the WING's `user/in`; a bus by its number).
+    pub number: AtomicI32,
+    /// Index into [`USER_SIGNAL_SIDES`].
+    pub side: AtomicI32,
+    /// POST (else PRE).
+    pub post: AtomicBool,
+}
+
+impl Default for UserSignalParams {
+    fn default() -> Self {
+        Self { group: AtomicI32::new(0), number: AtomicI32::new(1), side: AtomicI32::new(0), post: AtomicBool::new(false) }
+    }
+}
+
+impl UserSignalParams {
+    pub fn reset(&self) {
+        self.group.store(0, Relaxed);
+        self.number.store(1, Relaxed);
+        self.side.store(user_side::BOTH, Relaxed);
+        self.post.store(false, Relaxed);
+    }
+
+    pub fn is_default(&self) -> bool {
+        self.group.load(Relaxed) == 0
+            && self.number.load(Relaxed) == 1
+            && self.side.load(Relaxed) == user_side::BOTH
+            && !self.post.load(Relaxed)
+    }
+
+    /// The strip it copies: (kind, 1-based number), None when OFF.
+    pub fn strip(&self) -> Option<(StripKind, i32)> {
+        let kind = match self.group.load(Relaxed) {
+            1 => StripKind::Channel,
+            2 => StripKind::Aux,
+            3 => StripKind::Bus,
+            4 => StripKind::Main,
+            5 => StripKind::Matrix,
+            _ => return None,
+        };
+        Some((kind, self.number.load(Relaxed).max(1)))
+    }
+
+    /// Copies strip (kind, 1-based number); None = OFF.
+    pub fn set_strip(&self, strip: Option<(StripKind, i32)>) {
+        let group = match strip.map(|(k, _)| k) {
+            None => 0,
+            Some(StripKind::Channel) => 1,
+            Some(StripKind::Aux) => 2,
+            Some(StripKind::Bus) => 3,
+            Some(StripKind::Main) => 4,
+            Some(StripKind::Matrix) => 5,
+        };
+        self.group.store(group, Relaxed);
+        if let Some((_, n)) = strip {
+            self.number.store(n.max(1), Relaxed);
+        }
+    }
+}
+
+/// One user patch (USR 25-56), shared with the UI (`ld_engine_user_patches`).
+#[repr(C)]
+#[derive(Debug)]
+pub struct UserPatchParams {
+    /// The external source it copies (an input index, see
+    /// [`is_external_source`]), -1 = OFF.
+    pub source: AtomicI32,
+}
+
+impl Default for UserPatchParams {
+    fn default() -> Self {
+        Self { source: AtomicI32::new(-1) }
+    }
 }
 
 /// The oscillators' defaults: a 1 kHz sine at -6 dBFS, as on a factory-set WING.
@@ -289,6 +434,9 @@ impl SourceParams {
 /// The table index of input port `port` (a hardware input or a playback
 /// channel), None for ports without a source.
 pub fn source_index(port: i32) -> Option<usize> {
+    if let Some(n) = usr_channel(port) {
+        return Some(USR_SOURCE_INDEX + n);
+    }
     if let Some(n) = osc_channel(port) {
         return Some(OSC_SOURCE_INDEX + n);
     }
@@ -309,8 +457,10 @@ pub fn source_port(index: usize) -> Option<i32> {
         Some(PLAYBACK_SOURCE_BASE + (index - NUM_HW_SOURCES) as i32)
     } else if index < OSC_SOURCE_INDEX {
         Some(USB_PLAYER_SOURCE_BASE + (index - USB_PLAYER_SOURCE_INDEX) as i32)
-    } else if index < NUM_SOURCES {
+    } else if index < USR_SOURCE_INDEX {
         Some(OSC_SOURCE_BASE + (index - OSC_SOURCE_INDEX) as i32)
+    } else if index < NUM_SOURCES {
+        Some(USR_SOURCE_BASE + (index - USR_SOURCE_INDEX) as i32)
     } else {
         None
     }
@@ -327,6 +477,9 @@ pub struct SourceTable {
     /// Names (message thread; empty = the port's name).
     names: Mutex<Vec<String>>,
     osc: [OscParams; NUM_OSCILLATORS],
+    /// USR 1-24 and USR 25-56: what each copies.
+    user_signals: [UserSignalParams; NUM_USER_SIGNALS],
+    user_patches: [UserPatchParams; NUM_USER_PATCHES],
 }
 
 impl Default for SourceTable {
@@ -335,6 +488,8 @@ impl Default for SourceTable {
             params: (0..NUM_SOURCES).map(|_| SourceParams::default()).collect(),
             names: Mutex::new(vec![String::new(); NUM_SOURCES]),
             osc: Default::default(),
+            user_signals: Default::default(),
+            user_patches: Default::default(),
         };
         t.reset();
         t
@@ -377,6 +532,30 @@ impl SourceTable {
 
     pub fn oscillators(&self) -> &[OscParams] {
         &self.osc
+    }
+
+    /// USR 1-24: what each user signal copies.
+    pub fn user_signals(&self) -> &[UserSignalParams] {
+        &self.user_signals
+    }
+
+    /// USR 25-56: the source each user patch copies.
+    pub fn user_patches(&self) -> &[UserPatchParams] {
+        &self.user_patches
+    }
+
+    /// Patches user patch `n` (0-based) to `source`: an external source, or
+    /// OFF (-1) for anything else.
+    pub fn set_user_patch(&self, n: usize, source: i32) {
+        if let Some(p) = self.user_patches.get(n) {
+            p.source.store(if is_external_source(source) { source } else { -1 }, Relaxed);
+        }
+    }
+
+    /// The routing of the USR group back to OFF (a new console).
+    pub fn reset_user_routing(&self) {
+        self.user_signals.iter().for_each(UserSignalParams::reset);
+        self.user_patches.iter().for_each(|p| p.source.store(-1, Relaxed));
     }
 
     pub fn name(&self, index: usize) -> String {
@@ -452,6 +631,8 @@ impl SourceTable {
             name.push_str(f.name);
         }
         self.osc.iter().for_each(OscParams::reset);
+        drop(names);
+        self.reset_user_routing();
     }
 
     /// The defaults before Sidecar took the WING's for the USB player and
@@ -484,28 +665,89 @@ pub(crate) struct SourceDsp {
     /// Per pair (indexed by the pair's first source / 2).
     last_matrix: Vec<[f32; 4]>,
     num_hw: usize,
-    /// What the channels read: hardware inputs by port, playback channels
-    /// (then the USB PLAYER's four and the oscillators, see `source_ptr`).
+    /// What the channels read: hardware inputs by port, and the internal
+    /// signals in the layout of [`internal`] (playback channels, the USB
+    /// PLAYER, the oscillators, the USR group, the strip sources; see
+    /// `source_ptr`).
     hw_out: Vec<*const f32>,
     playback_out: Vec<*const f32>,
     /// The oscillators and the signal they generate this block.
     generators: Vec<SignalGenerator>,
     generated: Vec<Vec<f32>>,
+    /// The first buffer of the USR group.
+    usr_slot: usize,
+    /// User signals: this block's copies of their strips (before their
+    /// source processing), the processed signals one block late for the
+    /// channels, and which signals are routed (their ring is written).
+    user_raw: Vec<Vec<f32>>,
+    user_ring: ReturnRing,
+    user_live: [bool; NUM_USER_SIGNALS],
 }
 
 impl SourceDsp {
     /// Allocates for a device (message thread, device stopped).
     pub fn prepare(&mut self, num_hw_inputs: usize, block_size: usize, sample_rate: f64) {
         let num_hw = num_hw_inputs.min(NUM_HW_SOURCES);
-        let count = num_hw.next_multiple_of(2) + NUM_PLAYBACK_CHANNELS + USB_CHANNELS + NUM_OSCILLATORS;
+        let usr_slot = num_hw.next_multiple_of(2) + NUM_PLAYBACK_CHANNELS + USB_CHANNELS + NUM_OSCILLATORS;
+        let count = usr_slot + NUM_USR_SOURCES;
         self.num_hw = num_hw;
+        self.usr_slot = usr_slot;
         self.buffers = vec![vec![0.0; block_size]; count];
         self.last_gain = vec![1.0; count];
         self.last_matrix = vec![IDENTITY; count / 2];
         self.hw_out = vec![std::ptr::null(); num_hw_inputs];
-        self.playback_out = vec![std::ptr::null(); NUM_PLAYBACK_CHANNELS + USB_CHANNELS + NUM_OSCILLATORS];
+        self.playback_out = vec![std::ptr::null(); internal::COUNT];
         self.generators = (0..NUM_OSCILLATORS as u32).map(|n| SignalGenerator::new(sample_rate, 0x9e37_79b9 ^ (n + 1))).collect();
         self.generated = vec![vec![0.0; block_size]; NUM_OSCILLATORS];
+        self.user_raw = vec![vec![0.0; block_size]; NUM_USER_SIGNALS];
+        self.user_ring = ReturnRing::new(NUM_USER_SIGNALS, block_size);
+        self.user_live = [false; NUM_USER_SIGNALS];
+    }
+
+    /// Prepared for blocks of `n` samples and this many hardware inputs.
+    fn ready(&self, num_hw_inputs: usize, n: usize) -> bool {
+        self.hw_out.len() == num_hw_inputs && n <= self.buffers.first().map_or(0, Vec::len)
+    }
+
+    /// The signal of strip source `slot` (`routing::strip_source_slot`)
+    /// the channels read this block (null: silent).
+    pub fn set_strip_return(&mut self, slot: usize, ptr: *const f32) {
+        if let Some(p) = self.playback_out.get_mut(internal::STRIP + slot) {
+            *p = ptr;
+        }
+    }
+
+    /// The buffer user signal `i` (0-based) copies its strip into this block
+    /// (None when not routed or not prepared for `n`).
+    pub fn user_raw_mut(&mut self, i: usize, n: usize) -> Option<&mut [f32]> {
+        if !self.user_live.get(i).copied().unwrap_or(false) {
+            return None;
+        }
+        self.user_raw.get_mut(i).filter(|b| b.len() >= n).map(|b| &mut b[..n])
+    }
+
+    /// The user signals' source processing, once every strip has run: from
+    /// now on in this block the outputs read them as they are, and the
+    /// processed signals go into the ring the channels read next block.
+    ///
+    /// # Safety
+    /// Audio thread, after `process` in the same block.
+    pub unsafe fn process_user_signals(&mut self, table: &SourceTable, pos: usize, n: usize, mute_groups: u32) {
+        if self.user_raw.is_empty() || n > self.user_raw[0].len() {
+            return;
+        }
+        for pair in 0..NUM_USER_SIGNALS / 2 {
+            let i = pair * 2;
+            let raw: [*const f32; 2] =
+                std::array::from_fn(|ch| if self.user_live[i + ch] { self.user_raw[i + ch].as_ptr() } else { std::ptr::null() });
+            let out = self.process_pair(table, USR_SOURCE_INDEX + i, self.usr_slot + i, raw, n, mute_groups);
+            for (ch, &p) in out.iter().enumerate() {
+                if self.user_live[i + ch] && !p.is_null() {
+                    self.user_ring.write(i + ch, pos, std::slice::from_raw_parts(p, n));
+                }
+                self.playback_out[internal::USR + i + ch] = p;
+            }
+        }
     }
 
     pub fn hw_ptrs(&self) -> &[*const f32] {
@@ -517,10 +759,12 @@ impl SourceDsp {
     }
 
     /// Processes this block's sources from the raw port buffers (`usb`: the
-    /// USB deck's player channels; `mute_groups`: the engaged mute groups).
+    /// USB deck's player channels; `mute_groups`: the engaged mute groups;
+    /// `pos`: the return clock, where the user signals are read one block late).
     ///
     /// # Safety
     /// Audio thread. Non-null pointers must be valid for `n` samples.
+    #[allow(clippy::too_many_arguments)]
     pub unsafe fn process(
         &mut self,
         table: &SourceTable,
@@ -529,9 +773,10 @@ impl SourceDsp {
         usb: &[*const f32; USB_CHANNELS],
         n: usize,
         mute_groups: u32,
+        pos: usize,
     ) {
-        if self.hw_out.len() != hw.len() || n > self.buffers.first().map_or(0, Vec::len) {
-            // Not prepared for this layout: pass everything through.
+        if !self.ready(hw.len(), n) {
+            // Not prepared for this layout: pass the ports through (internal signals silent).
             self.hw_out.clear();
             self.playback_out.clear();
             self.hw_out.extend_from_slice(&hw[..hw.len().min(self.hw_out.capacity())]);
@@ -540,7 +785,7 @@ impl SourceDsp {
             let room = self.playback_out.capacity() - self.playback_out.len();
             self.playback_out.extend_from_slice(&usb[..USB_CHANNELS.min(room)]);
             let room = self.playback_out.capacity() - self.playback_out.len();
-            self.playback_out.extend(std::iter::repeat_n(std::ptr::null(), NUM_OSCILLATORS.min(room)));
+            self.playback_out.extend(std::iter::repeat_n(std::ptr::null(), room));
             return;
         }
         // Ports beyond the source table pass through.
@@ -566,8 +811,8 @@ impl SourceDsp {
                 playback.get(ch + 1).copied().unwrap_or(std::ptr::null()),
             ];
             let [l, r] = self.process_pair(table, NUM_HW_SOURCES + ch, base + ch, raw, n, mute_groups);
-            self.playback_out[ch] = l;
-            self.playback_out[ch + 1] = r;
+            self.playback_out[internal::PLAYBACK + ch] = l;
+            self.playback_out[internal::PLAYBACK + ch + 1] = r;
         }
         // The USB PLAYER, after the playback channels.
         let base = base + NUM_PLAYBACK_CHANNELS;
@@ -575,16 +820,52 @@ impl SourceDsp {
             let ch = pair * 2;
             let [l, r] =
                 self.process_pair(table, USB_PLAYER_SOURCE_INDEX + ch, base + ch, [usb[ch], usb[ch + 1]], n, mute_groups);
-            self.playback_out[NUM_PLAYBACK_CHANNELS + ch] = l;
-            self.playback_out[NUM_PLAYBACK_CHANNELS + ch + 1] = r;
+            self.playback_out[internal::USB + ch] = l;
+            self.playback_out[internal::USB + ch + 1] = r;
         }
         // The oscillators, after the USB PLAYER.
         let raw = self.generate(table, n);
         let [l, r] = self.process_pair(table, OSC_SOURCE_INDEX, base + USB_CHANNELS, raw, n, mute_groups);
-        self.playback_out[NUM_PLAYBACK_CHANNELS + USB_CHANNELS] = l;
-        self.playback_out[NUM_PLAYBACK_CHANNELS + USB_CHANNELS + 1] = r;
+        self.playback_out[internal::OSC] = l;
+        self.playback_out[internal::OSC + 1] = r;
+
+        // USR 25-56, the user patches: copies of the processed external sources.
+        for pair in 0..NUM_USER_PATCHES / 2 {
+            let i = NUM_USER_SIGNALS + pair * 2;
+            let raw: [*const f32; 2] = std::array::from_fn(|ch| {
+                let src = table.user_patches[i - NUM_USER_SIGNALS + ch].source.load(Relaxed);
+                self.external_ptr(src).unwrap_or(std::ptr::null())
+            });
+            let [l, r] = self.process_pair(table, USR_SOURCE_INDEX + i, self.usr_slot + i, raw, n, mute_groups);
+            self.playback_out[internal::USR + i] = l;
+            self.playback_out[internal::USR + i + 1] = r;
+        }
+        // USR 1-24, the user signals: the channels read last block's.
+        for i in 0..NUM_USER_SIGNALS {
+            let routed = table.user_signals[i].strip().is_some();
+            if routed && !self.user_live[i] {
+                self.user_ring.clear(i); // newly routed: no stale signal
+            }
+            self.user_live[i] = routed;
+            self.playback_out[internal::USR + i] =
+                if routed { self.user_ring.read(i, pos, n).map_or(std::ptr::null(), <[f32]>::as_ptr) } else { std::ptr::null() };
+        }
     }
 
+    /// The processed buffer of an external source (a user patch's copy).
+    fn external_ptr(&self, input: i32) -> Option<*const f32> {
+        if !is_external_source(input) {
+            return None;
+        }
+        let p = if let Some(n) = playback_channel(input) {
+            self.playback_out.get(internal::PLAYBACK + n)
+        } else if let Some(n) = usb_player_channel(input) {
+            self.playback_out.get(internal::USB + n)
+        } else {
+            self.hw_out.get(usize::try_from(input).ok()?)
+        };
+        p.copied().filter(|p| !p.is_null())
+    }
     /// Runs the oscillators into `generated` (a pair on OSC 1's settings, its
     /// sine in phase) and returns their buffers.
     fn generate(&mut self, table: &SourceTable, n: usize) -> [*const f32; 2] {

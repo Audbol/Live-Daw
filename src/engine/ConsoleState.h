@@ -61,6 +61,12 @@ struct FaderRef
     int dcaIndex = 0;
     bool send = false;
     StripRef to;    // a send's destination
+    /** A send of the selected strip (the CONFIG screen's "S" item, WING manual
+        5.10 Fig. 59): `strip` is unused, the fader follows the selection. */
+    bool selected = false;
+    /** A send fader showing its destination's name, colour and icon (BUS
+        CUSTOMIZATION, manual 5.10 Fig. 60) instead of its source's. */
+    bool busCustom = false;
     bool fxParam = false;
     int fxSlot = 0, param = 0;
     bool midiCc = false;
@@ -92,6 +98,23 @@ struct FaderRef
         f.strip = from;
         f.send = true;
         f.to = dest;
+        return f;
+    }
+    /** The selected strip's send to `dest` (it follows the selection). */
+    static FaderRef ofSelectedSend (const StripRef& dest, bool busCustomization = false) noexcept
+    {
+        FaderRef f;
+        f.send = true;
+        f.selected = true;
+        f.to = dest;
+        f.busCustom = busCustomization;
+        return f;
+    }
+    /** The same send fader with BUS (true) or SOURCE CUSTOMIZATION. */
+    FaderRef withBusCustomization (bool bus) const noexcept
+    {
+        FaderRef f = *this;
+        f.busCustom = send && bus;
         return f;
     }
     static FaderRef ofFxParam (int slot, int parameter) noexcept
@@ -129,7 +152,9 @@ struct FaderRef
             return fxSlot == o.fxSlot && param == o.param;
         if (midiCc)
             return midiChannel == o.midiChannel && cc == o.cc;
-        return strip == o.strip && (! send || to == o.to);
+        if (send)
+            return to == o.to && selected == o.selected && busCustom == o.busCustom && (selected || strip == o.strip);
+        return strip == o.strip;
     }
 
     ld::FaderRefC toC() const noexcept;

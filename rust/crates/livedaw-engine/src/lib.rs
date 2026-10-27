@@ -18,6 +18,7 @@ pub mod monitor;
 pub mod params;
 pub mod pdc;
 pub mod pool;
+pub mod routing;
 pub mod sends;
 pub mod solo;
 pub mod sources;

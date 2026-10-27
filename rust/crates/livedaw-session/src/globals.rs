@@ -15,7 +15,7 @@ use crate::xml::{fmt_f32, Element};
 use livedaw_engine::atomic::AtomicF32;
 use livedaw_engine::monitor::MonitorDspParams;
 use livedaw_engine::params::MonitorSourceParams;
-use livedaw_engine::sources::{source_mode, SourceParams, NUM_SOURCES, OSC_SOURCE_INDEX};
+use livedaw_engine::sources::{source_mode, SourceParams, NUM_SOURCES, OSC_SOURCE_INDEX, USER_SIGNAL_GROUPS, USER_SIGNAL_SIDES};
 use livedaw_engine::talk::talk_tag;
 use livedaw_engine::Engine;
 use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU32, Ordering::Relaxed};
@@ -303,6 +303,61 @@ pub(crate) fn apply_scene_sources(engine: &Engine, parent: &Element, respect_saf
                 get_f(x, "freq", &o.freq_hz);
             }
             None => o.reset(),
+        }
+    }
+}
+
+/// The routing outside the strips (manual 2.6, 5.4): the sources patched
+/// straight to outputs, what each user signal and user patch copies:
+/// `<Patch><Out port=".." src=".."/>.. <Usr i=".." grp=".." in=".." lr=".."
+/// post=".."/>.. <UPatch i=".." src=".."/>..</Patch>`, only what isn't OFF.
+/// Scenes recall it with ROUTING, like the strips' own patch.
+pub fn capture_routing(engine: &Engine, parent: &mut Element) {
+    let e = parent.add_new("Patch");
+    for (port, src) in engine.output_patch().patched() {
+        e.add_new("Out").set("port", port).set("src", src);
+    }
+    let table = engine.sources();
+    for (i, u) in table.user_signals().iter().enumerate() {
+        if u.is_default() {
+            continue;
+        }
+        let x = e.add_new("Usr");
+        x.set("i", i);
+        put_i(x, "grp", &u.group);
+        put_i(x, "in", &u.number);
+        put_i(x, "lr", &u.side);
+        put_b(x, "post", &u.post);
+    }
+    for (i, p) in table.user_patches().iter().enumerate() {
+        let src = p.source.load(Relaxed);
+        if src >= 0 {
+            e.add_new("UPatch").set("i", i).set("src", src);
+        }
+    }
+}
+
+/// Restores [`capture_routing`]: what the element doesn't list is OFF. A
+/// state without it (an older show or scene) leaves the routing alone.
+pub fn apply_routing(engine: &Engine, parent: &Element) {
+    let Some(e) = parent.child("Patch") else { return };
+    let patch = engine.output_patch();
+    patch.reset();
+    for x in e.children_named("Out") {
+        patch.set(x.int_or("port", -1), x.int_or("src", -1));
+    }
+    let table = engine.sources();
+    table.reset_user_routing();
+    for x in e.children_named("Usr") {
+        let Some(u) = usize::try_from(x.int_or("i", -1)).ok().and_then(|i| table.user_signals().get(i)) else { continue };
+        u.group.store(x.int_or("grp", 0).clamp(0, USER_SIGNAL_GROUPS.len() as i32 - 1), Relaxed);
+        u.number.store(x.int_or("in", 1).max(1), Relaxed);
+        u.side.store(x.int_or("lr", 0).clamp(0, USER_SIGNAL_SIDES.len() as i32 - 1), Relaxed);
+        get_b(x, "post", &u.post);
+    }
+    for x in e.children_named("UPatch") {
+        if let Ok(i) = usize::try_from(x.int_or("i", -1)) {
+            table.set_user_patch(i, x.int_or("src", -1));
         }
     }
 }

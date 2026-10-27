@@ -66,8 +66,14 @@ CompactSection::CompactSection (UiContext& c) : ctx (c), fader13 (c, LayerSet::C
         addAndMakeVisible (k);
     }
 
-    // Fader 13 has no scribble strip: the LCD names what it controls.
+    // Fader 13 has no scribble strip: the LCD names what it controls. Its
+    // SELECT held after a DCA key: the DCA assignment (manual 4.2 p. 16).
     fader13.setScribbleShown (false);
+    fader13.setSelectHeld ([this] (bool down)
+    {
+        const bool dcaKeys = keyMode() == compact::KeyMode::Dca && ! ctx.settings.getBoolValue (uiprefs::compactDcaCustom, false);
+        ctx.compactDcaAssign = down && dcaKeys && juce::isPositiveAndBelow (assignDca, kNumDcas) ? assignDca : -1;
+    });
     addAndMakeVisible (fader13);
     startTimerHz (4);
 }
@@ -80,6 +86,7 @@ compact::KeyMode CompactSection::keyMode() const
 void CompactSection::setKeyMode (compact::KeyMode m)
 {
     selectedKey = -1;
+    assignDca = -1;
     ctx.settings.setValue (uiprefs::compactKeyMode, compact::keyModeToken (m));
     refresh();
 }
@@ -111,12 +118,19 @@ void CompactSection::pressKey (int key, bool held)
     const auto mf = keyMainFader (key);
     if (! mf)
     {
-        // A DCA spill or a custom control key (held or not).
+        // A DCA spill or a custom control key (held or not). A key with a
+        // parameter gives it to the knob right of the display.
         if (const auto f = keyFunction (key); f.isAssigned())
         {
+            if (keyControl (key))
+                if (auto b = cc::bindHeldKey (ctx, f); b.isValid() && ctx.setFineTarget)
+                    ctx.setFineTarget (b, keys[key]);
             cc::press (ctx, f);
             cc::release (ctx, f);
         }
+        // The DCA the main fader section's SELECT then assigns to.
+        if (! keyControl (key) && keyMode() == compact::KeyMode::Dca && key < kNumDcas)
+            assignDca = key;
         return;
     }
 

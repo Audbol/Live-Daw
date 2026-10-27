@@ -39,8 +39,17 @@ with or endorsed by Behringer or Music Tribe; "WING" is their trademark.
     WING: 0 dB on both sides at centre, the near side rising to +3 dB and the far side
     falling to off at the edge (a stereo channel's pan is a balance: unity at centre,
     the far side turned down).
-- **Buses 9+ feed buses 1-8**, matrices take the mains and a **direct input** from any
-  channel (invert it for a mix-minus).
+- **Every bus feeds every other bus** (BUS → BUS, as the WING's 16): a bus runs after
+  the buses sending to it, so a chain arrives in the same block; a loop (Bus 3 → Bus 7 →
+  Bus 3) is cut at its lowest bus, whose loop send takes the previous audio block (the
+  WING delays every bus to bus send by 8 samples). Matrices take the mains and a
+  **DIRECT INPUT**: OFF, AES (no AES/EBU input here: silent), the PHONES (MON.PH), the
+  SPEAKERS (MON.SPK) or the solo bus (MON.BUS), a block late, with its level and
+  INVERT.
+- **Buses, mains and matrices are channel sources** (ROUTING > CHANNELS, groups BUS,
+  MAIN, MATRIX), a block late; **user signals** copy any strip and **user patches** any
+  port (ROUTING > SOURCES, USER SIGNAL); any source plays on an output without a
+  channel (ROUTING > OUTPUTS).
 - **FX rack:** 16 slots, used by any strip's insert, each holding one of the WING's
   devices:
   - **26 premium effects** (slots 1-8): 16 reverbs (hall, room, chamber, plate,
@@ -127,7 +136,8 @@ with or endorsed by Behringer or Music Tribe; "WING" is their trademark.
   delays the other sources summed into the same bus, main or matrix by the
   difference, so parallel paths stay in time: a channel going to Main 1 directly and
   through a bus with a plugin arrives once, not twice. The compensation follows the
-  bus stages (buses 9-16 into buses 1-8, buses into mains, mains into matrices) and
+  bus stages (buses into the buses they feed, buses into mains, mains into matrices;
+  a bus send closing a loop and the other block-late paths aren't compensated) and
   the tap of each send (an insert counts only once the send's tap point is past it).
   A plugin's FX MIX delays its dry signal by the plugin's latency too; an outboard
   insert counts as a plugin with its round trip as latency. It is on by
@@ -193,10 +203,19 @@ like the finish. The COMPACT is black, so it always shows the black finish. It f
     13-16 U4).
   - A key pressed again lets its bus, main or matrix go: fader 13 goes back to MAIN
     FADER, and Sends on Fader or the spill ends.
+  - DCA assignment, as on the console: press a DCA key, hold fader 13's SELECT,
+    and press the SELECT keys of the strips to put in the DCA (or take out; the
+    layer keys still work meanwhile). While SELECT is held, the strips' SELECT
+    keys light on the DCA's members.
 - **VIEW** opens the FADERS screen. Hold it for CUSTOM CONTROLS on the keys' set (USER
   1-4 in USER mode, MAIN/MTX 5-8 in MAIN MATRIX mode, DCA 1-4 in DCA mode); ‹ › step
   through the nine sets. Each set has four keys, each with a function, a name and a
-  colour. The colour shows beside the key's name on the LCD.
+  colour. The colour shows beside the key's name on the LCD. A key with a parameter
+  (FX PAR) also hands it to the knob right of the display, as the COMPACT's "hold the
+  custom control and use the knob to the right of the main display". **DAW
+  LAYER** (CC EDIT > OTHER) is the COMPACT's way into DAW remote control: assign it
+  to a key, and that key switches DAW mode on and off as the full-size WING's DAW key
+  does.
 - **Fader 13** is the main fader: SETUP > SURFACE > MAIN FADER > SOURCE (OFF, a main,
   a matrix or a DCA), MAIN 1 at first. The BUS and MAIN MATRIX keys put another bus,
   main or matrix on it while their key is selected. KEEP MAIN FADER leaves it on MAIN
@@ -212,6 +231,12 @@ like the finish. The COMPACT is black, so it always shows the black finish. It f
   USER LAYER LINK are hidden.
 - The COMPACT has no channel strip section, custom controls section, 4-Channel
   section, center or right fader section, wheel or DAW key; Sidecar leaves them out.
+- The VIEW screens show the COMPACT's two sections at the foot of the layer column:
+  **COMPACT** (the fader section) and **VIRTUAL**, which only the screens have (WING
+  manual 5.7): eight layers of its own, eight faders wide, empty and unnamed at first
+  (the empty keys in the column). Fill them on VIEW > CONFIG and name them with
+  RENAME, then mix them on FADERS or OVERVIEW. They are saved with the show, and the
+  full-size WING keeps them.
   ROUTING has no AUX IN or AUX OUT group, as the COMPACT has no local aux inputs or
   outputs. SETUP > SURFACE > CH AUTOSELECT has one key, **CMPCT**.
 - WING remote clients see a COMPACT: Sidecar answers with model `wing-compact`.
@@ -219,7 +244,8 @@ like the finish. The COMPACT is black, so it always shows the black finish. It f
   and `autosel_CMPCT`, both ways; KEEP MAIN FADER, MAIN SPILL, MATRIX SPILL and USE
   DCA BUTTONS 1-16 AS CC are `mfdrkeep`, `mainspill`, `mtxspill` and `dcacc`. The
   key sets are `/$ctl/user/U1`-`U4`, `MM` and `D1`-`D4`, so WING Edit and Mixing
-  Station see and set them.
+  Station see and set them (on the full-size WING too, as WING Edit lists them there),
+  and the virtual layers are `/$ctl/layer/VRT/1`-`8`.
 - The COMPACT has 24 local MIDAS PRO preamps where the full-size WING has 8, no local
   aux inputs and outputs, and 1x2 GPIO instead of 2x2. Sidecar's sources are its
   audio interface's inputs either way, so this changes no routing; LCL 1-24 all have
@@ -353,10 +379,17 @@ like the finish. The COMPACT is black, so it always shows the black finish. It f
     tiles past the interface's inputs read n/a but can be patched), inputs 49-96 and
     97-144 are **AES50 B** / **C** (as the WING remote protocol numbers them),
     **WLIVE PLAY** the multitrack recorder's 64 playback channels (PLAY 1 ...),
-    **USB PLAYER** the USB player and **OSCILLATOR** OSC 1 / 2. The other groups
-    (AUX IN, AES/EBU, AES50 A, ST CONNECT, USB AUDIO, DANTE, BUS, MAIN, MATRIX, USER
-    SIGNAL) can be selected and show n/a tiles, like a console without that card.
-    SOURCES sets each input's source:
+    **USB PLAYER** the USB player and **OSCILLATOR** OSC 1 / 2. **BUS**, **MAIN** and
+    **MATRIX** hold the strips as sources (manual 2.6), two tiles each (BUS 1L, BUS 1R
+    ...) in the strip's colour with its name and icon: a touch patches the strip to the
+    channel in stereo. The channel hears it one audio block later (the WING: 38
+    samples); a channel sending to the bus it listens to is a feedback loop, as on the
+    console. **USER SIGNAL** holds USR 1-56 (below). The other groups (AUX IN,
+    AES/EBU, AES50 A, ST CONNECT, USB AUDIO, DANTE) can be selected and show n/a
+    tiles, like a console without that card.
+    SOURCES sets each input's source (drag over the tiles to select several: every
+    change then goes to all of them, each GAIN in its group's range; the first one's
+    settings show, and a touch selects one again):
     name (RENAME), colour and icon, GAIN (digital here, in the WING's range for the
     group: LOCAL IN -2.5 to +45 dB in 2.5 dB steps, AES50 B / C -3 to +45.5 dB in
     0.5 dB steps; WLIVE PLAY and the USB player have none, as on the WING), +48V
@@ -374,13 +407,28 @@ like the finish. The COMPACT is black, so it always shows the black finish. It f
     (-40 to -6 dBFS, the sine's peak; the noises have the same RMS) in place of +48V,
     POL and GAIN; MUTE switches it off. STEREO pairs OSC 1 and 2 on OSC 1's settings
     (the sine in phase on both sides, the noises uncorrelated), MID/SIDE decodes them
-    as for other sources. The settings are saved with the show. OUTPUTS works
+    as for other sources. The settings are saved with the show. The **USER SIGNAL**
+    group (manual 2.6): USR 1-24 are **user signals**, USR 25-56 **user patches**.
+    Selecting one on SOURCES shows SOURCE in place of +48V (click: the group, then
+    the strip or port), POL and MUTE (no gain, as on the WING); a user signal also has
+    L+R / L / R (which side of a stereo strip; L+R mixes both at half; a mono channel
+    is the same either way) in the REMOTE column and TAP **PRE** (the strip's tap
+    point) / **POST** (after its processing: an input channel before its pan, a bus,
+    main or matrix its output) in place of RCV CUST. A user signal copies CH 1-40, AUX,
+    BUS, MAIN or MTX; channels patched to it hear it a block late, outputs at once. A
+    user patch copies a LOCAL IN, AES50, WLIVE PLAY or USB PLAYER port, in the same
+    block: two adjacent USR sources set to STEREO or MID/SIDE make a pair from any two
+    ports, each with its own gain on its port and its own polarity. OUTPUTS works
     output-first: pick an output (OUTPUT GROUP **LOCAL OUT** is the interface's
     outputs; **RECORDER** taps a signal for the USB recorder), then the signal feeding
     it from the source group: **BUS**, **MAIN**, **MATRIX** (each L / R), **MONITOR**
     (PHONES 1L / 1R, SPEAKERS 2L / 2R), **FX SEND** (FX 1L ... FX 16R: the FX
-    slots' outboard insert sends) or **USER SIGNAL** (the channels' and aux
-    channels' own outputs). Defaults: every interface input on its channel (the
+    slots' outboard insert sends), **USER SIGNAL** (USR 1-56) or any input group
+    (LOCAL IN, AES50 B / C, OSCILLATOR, WLIVE PLAY, USB PLAYER: the source after its
+    gain, mute and polarity, straight to the output, as the manual's "route any
+    Source to any digital or analog output"). An output has one signal: patching one
+    replaces what fed it. Direct outs of channels from older shows still play and show
+    on their outputs (user signals now make them). Defaults: every interface input on its channel (the
     console patches its eight local inputs to channels 1-8) and MAIN 1 on LOCAL OUT
     1-2 (the console uses LOCAL OUT 7-8 and feeds buses 1-6 to 1-6).
   - **SETUP:** GENERAL (lighting, clock, console info and size, the surface's finish
@@ -412,7 +460,19 @@ like the finish. The COMPACT is black, so it always shows the black finish. It f
     the level; laid out as on a WING with firmware 3.1) and
     CC EDIT (also SETUP pressed twice): the custom
     control layers, a function list and the target lists, COLOR, CLR ALL and NAME,
-    saved with the show.
+    saved with the show. The function lists follow WING Edit's order. Keys also have
+    **CH INSERT PRE / POST ON/OFF** (a strip's INS 1 / INS 2), **FX PAR** (an FX
+    slot's parameter or MIX: a press toggles a switch or steps a list; held, the
+    encoder above it sets it; on a delay's TIME the key taps the tempo and flashes as
+    SETUP > GENERAL > TAP TEMPO FLASH says: OFF, 8X for eight beats after the time
+    changes, or ON), **OVERVIEW PAGE** (the OVERVIEW screen of a section on a layer
+    key or bank) and the whole OTHER list: TALKBACK A / B (as the TALK keys), GLOBAL
+    MAIN/ALT (the global input switch), DAW LAYER, MONITOR PHONES / SPEAKERS / PH+SPK
+    (the monitoring path), MONITOR DIM / MONO / SWAP / MUTE, FADER -oo / -10 dB /
+    0 dB, AUTOMIX X / Y, CHANNEL PREV / NEXT, CH / BUS / MAIN / MTX SOLO TAP (PFL /
+    AFL, lit for AFL), CH / BUS / MAIN / MTX / DCA METER TAP (PRE / POST, lit for
+    POST), and Sidecar's CC BANK UP / DOWN and SOF OFF. MONITORING encoders also set
+    PHONES LEVEL.
   - **LIBRARY:** a file browser with the locations INT (`Documents/Sidecar/Library`),
     USB (a folder of your choice) and SHOW (the show's scenes and snippets: tags, SKIP,
     LINK, REMOVE, RENAME, UP / DOWN), with FOLDER, RENAME, DELETE and sorting. Tabs:
@@ -443,7 +503,11 @@ like the finish. The COMPACT is black, so it always shows the black finish. It f
     Fader, show and set the send level, MUTE switching the send), SENDS (sends on faders
     to one bus, main or matrix), CONFIG (edit any layer key; see *Editing user layers*
     below; a **MIDI CC** fader sends its CC, 0-127, out of EXTERNAL MIDI CONTROL and
-    follows the CC coming in) and MUTE GROUPS (the eight groups'
+    follows the CC coming in; with SENDS or BUS -> BUS, **SOURCE CUSTOMIZATION** /
+    **BUS CUSTOMIZATION** choose whether the send faders assigned show their source's
+    or their destination's name, colour and icon, and the **S** item (a white S box,
+    the selected channel's name over it) is the selected channel's send to the
+    destination: on the surface it follows the selection) and MUTE GROUPS (the eight groups'
     members, a column red while its group is engaged, the group keys on the right; a
     column's header (MGRP.n over its number) opens the MUTE GROUP n window, a name
     field and the keyboard, the name changing as it's typed; touching the rest of a
@@ -505,7 +569,12 @@ like the finish. The COMPACT is black, so it always shows the black finish. It f
   and PAN keys give the four strips of the right fader section an encoder and a key
   each (trim and the source's +48V, switched by holding the key 2 s; gate / comp
   threshold and on; low / high cut; bus sends; pan / width and MAIN 1), with their
-  scribble strips on a four-way LCD.
+  scribble strips on a four-way LCD. With SETUP > SURFACE > USE F1-F3 AS CUSTOM
+  CONTROLS, F1-F3 mirror the custom control layers 1-3, as on the console: F1 gives
+  the four encoders and the four upper keys of layer 1, F2 of layer 2, F3 of layer 3
+  (CC EDIT assigns them; the LCD reads CC1-CC3). Shows saved by earlier versions,
+  which kept F1-F3 on layers of their own, move those assignments to layers 1-3
+  where those controls are free.
 - **Custom controls** (between the center and right sections): the upper part's 16
   layers of four encoders and eight keys (assigned on CC EDIT; UP / DOWN; names and
   colours on the LCD), the lower layers **USER** (eight assignable keys), **2-TRACK
@@ -516,7 +585,8 @@ like the finish. The COMPACT is black, so it always shows the black finish. It f
   groups) and **SHOW CNTRL** (scene back, GO, SCENES; the wheel picks the scene GO
   recalls); the **DAW** key switches DAW remote control on and off (held, or with DAW
   control off: the multitrack editor). With USE CRSR/WHEEL the arrows and the wheel
-  edit the display.
+  edit the display. Holding a key with a parameter (FX PAR) gives it to the encoder
+  above the key until it is let go (WING manual 4.8).
 
 ## Multitrack recording
 
@@ -841,14 +911,17 @@ and open-source projects (see below), and it is **experimental**.
   block); Sidecar ignores them, as a 3.1 console would. LOCAL OUT n and AES50 A n are
   one port in Sidecar, so a WING Edit file made on a real WING that patches them
   differently ends up with A n's patch after PC -> MIXER.
-- **What maps:** every parameter of the WING 3.1 tree but one answers (68,555 of
-  68,556, counting every model's parameters). 61,241 of them (89.3 %) drive the
-  engine, 78 are Sidecar's SETUP settings, and the 7,236 Sidecar has no equivalent
-  for answer what a factory-initialized WING answers (see below). Driving the engine: channels, aux, buses, mains
+- **What maps:** every parameter of the WING 3.1 tree but one answers (79,325 of
+  79,326, counting every processing model's parameters and every custom control
+  mode's function nodes). 73,664 of them (92.9 %) drive the engine or the show, 85
+  are Sidecar's SETUP settings, and the 5,576 Sidecar has no equivalent for answer what a factory-initialized WING answers (see below). Driving the engine: channels, aux, buses, mains
   and matrices (name, colour, icon, input and ALT patch, trim, filters, gate, EQ and
   dynamics models with all their parameters, inserts, fader, mute, pan, width, sends,
-  main sends, solo, TAP WIDTH and TAP EQ), DCAs (with their SOLO BUS), mute groups, the FX rack, output
-  routing (LOCAL OUT is A 1-8, as on ROUTING), the USB recorder's RECORDER ports
+  main sends, solo, TAP WIDTH and TAP EQ, every bus's sends to the other buses, the
+  matrices' `dir/in`), DCAs (with their SOLO BUS), mute groups, the FX rack, output
+  routing (LOCAL OUT is A 1-8, as on ROUTING; any input group's source too), the
+  USER SIGNAL group (`/io/in/USR/1-56`: the source settings and `user/grp`, `in`,
+  `lr`, `tap`), the USB recorder's RECORDER ports
   (`/io/out/REC/1-4`: any bus, main, matrix or source), the sources of the LOCAL IN
   (the same ports as AES50 A), AES50 A/B/C, WING-LIVE card and USB player (`PLAY`)
   groups (name, colour, icon, gain, mute, polarity, +48V, mode, mute-group tags),
@@ -888,8 +961,8 @@ and open-source projects (see below), and it is **experimental**.
   follows, the brightness tiles, the time and date format, SHOW METER PAGE WHEN
   LOCKED...), the surface lock's string (`/$ctl/$stat/cnslock`, read only), MIDI REMOTE CONTROL
   (`/$ctl/midi`) and DAW (`/$ctl/daw`: enable, connection, emulation, upper CC,
-  wheel, preset) and the rows of features Sidecar doesn't have (TAP TEMPO FLASH,
-  MOUSE DISABLES TOUCH, SEND PAGE ACTIVATES SOLO, the OSC and
+  wheel, preset) and the rows of features Sidecar doesn't have (MOUSE DISABLES
+  TOUCH, SEND PAGE ACTIVATES SOLO, the OSC and
   TCP remote locks), which are only kept. `/$globals/clkrate` is the audio device's rate. Not mapped:
   DAW CONFIGURATION (`/$ctl/daw/config`), whose 3.1 choices (CC, MSTR) can't show
   Sidecar's MCU with extenders. The fader sections' layers (`/$ctl/layer/L`, `C`, `R`) and the custom
@@ -898,13 +971,15 @@ and open-source projects (see below), and it is **experimental**.
   shown layer (`ofs`), name the USER keys' user layers and assign faders (`type`,
   `i`, `dst`: channels, buses, DCAs, sends, FX parameters, MIDI CCs; a default key
   becomes an edited key as on VIEW > CONFIG), and set each custom control's
-  functions (`mode`), name and colour and the CC layer (`sel`); the console's
+  functions (`mode`) with their targets and options (the mode's own nodes, as WING
+  Edit's CC EDIT sets them: `ch`, `fx` / `par`, `other` / `CCBK`, `area` / `bank`,
+  `pg`, `tgt`, `btn`, `send`, `mgrp`, `dca`, `tag`, `action`, `usbpr`, MIDI `ch` /
+  `cc` / `note`), name and colour and the CC layer (`sel`); the console's
   changes show to clients within a tenth of a second. As on the console, a
   layer's slots are fixed: OFF blanks a slot, and a fader assigned past the end
-  leaves blank slots before it. Only the shown layer has a scroll position, and a new function starts at its first target
-  (clients can't choose it: the WING's tree only has the function). The encoding of
-  fader assignments and the custom controls of `U1`-`U3` (taken as the 4-Channel
-  section's F1-F3 layers) are educated guesses. What Sidecar has no equivalent for
+  leaves blank slots before it. Only the shown layer has a scroll position, and a new
+  function starts at its first target. The encoding of fader assignments is an
+  educated guess. What Sidecar has no equivalent for
   (the cards, the console's hardware, network and status, the other WING models'
   layers, the 4-Channel and button section modes, the input groups Sidecar doesn't
   have (AUX, AES, SC, USB, MOD, USR), a DCA's monitor bus, a channel's TAP SOLO,

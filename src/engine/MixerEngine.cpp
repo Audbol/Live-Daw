@@ -90,6 +90,9 @@ MixerEngine::MixerEngine (int numWorkerThreads)
 {
     sourceTable = ld::ld_engine_sources (engine, &numSources);
     oscillators = ld::ld_engine_oscillators (engine, &numOscillators);
+    userSignals = ld::ld_engine_user_signals (engine, &numUserSignals);
+    userPatches = ld::ld_engine_user_patches (engine, &numUserPatches);
+    outputPatch = ld::ld_engine_output_patch (engine, &numPatchOutputs);
     syncStrips();
     startWorkers (getSampleRate(), getBlockSize());
     startTimerHz (10);
@@ -391,6 +394,13 @@ juce::String MixerEngine::monitorSourceName (int index)
 juce::String MixerEngine::directSourceName (int index)
 {
     return takeString (ld::ld_monitor_direct_name (index));
+}
+
+juce::String MixerEngine::matrixDirectName (int index)
+{
+    // The WING's /mtx/n/dir/in list (manual 6.4: AES/EBU, Phones, Speakers or Solo bus).
+    static const char* const names[] = { "OFF", "AES", "MON.PH", "MON.SPK", "MON.BUS" };
+    return juce::isPositiveAndBelow (index, (int) std::size (names)) ? names[index] : names[0];
 }
 
 Strip* MixerEngine::getSourceSoloHost() const noexcept

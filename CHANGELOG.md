@@ -58,6 +58,44 @@ All notable changes to Sidecar are listed here. Versions follow
   Edit's name for the black WING) in all of them, and the finish changes it at once.
   Exported snapshots name the model as WING Edit's do. The serial
   `SIDECAR0001` and the firmware's `sidecar` still tell Sidecar apart.
+- Inputs straight to outputs (WING manual 2 and 5.4 OUTPUTS: "route any Source to any
+  digital or analog output"): on ROUTING > OUTPUTS every source group feeds outputs,
+  LOCAL IN, AES50, OSCILLATOR, WLIVE PLAY, USB PLAYER and USER SIGNAL included, without
+  a channel. The output plays the source after its gain, mute and polarity. An output
+  has one source: a source replaces the strip or monitor path there, and the other way
+  round. The RECORDER ports tap sources too. Saved with the show and recalled by scenes
+  with ROUTING (`<Patch>`); WING REMOTE: `/io/out/<grp>/<n>/grp` and `in` take every
+  input group.
+- Buses, mains and matrices as channel sources (WING manual 2.6, "All Buses, Mains and
+  Matrices can be selected as the Source for all Input and Aux channels"): ROUTING >
+  CHANNELS' BUS, MAIN and MATRIX groups show two tiles per strip (BUS 1L, BUS 1R ...)
+  with the strip's colour, name and icon; a touch patches the strip in stereo. The
+  channel hears it one audio block later (the WING: 38 samples): a channel that sends
+  to the bus it listens to is a feedback loop through that delay, as on the console.
+  WING REMOTE: `/ch/<n>/in/conn/grp` BUS, MAIN, MTX (number 2k-1 = strip k L, 2k = R).
+- User Signals and User Patches, the WING's USER SIGNAL group (WING manual 2.6): USR
+  1-24 copy an input channel, aux, bus, main or matrix, PRE (its tap point) or POST
+  (after its processing), its L, R or both mixed (L+R); USR 25-56 copy an external
+  source (a port, a playback channel, the USB player), so two ports from anywhere make a
+  stereo or mid/side source with their own gain and polarity. Both are sources: MUTE,
+  POL, name, colour, icon, tags and pairs (STEREO, MID/SIDE). ROUTING > SOURCES' USER
+  SIGNAL group sets them: SOURCE (the group, then the strip or port), L+R / L / R and
+  TAP PRE / POST. Channels patch them on CHANNELS (a user signal a block late; a user
+  patch in the same block), outputs on OUTPUTS (in the same block). WING REMOTE:
+  `/io/in/USR/<n>/user/grp`, `in`, `lr`, `tap` and the sources' `name`, `col`, `icon`,
+  `mute`, `pol`, `tags`, `mode`. Saved with the show (their settings with the sources).
+- ROUTING > SOURCES selects several sources by dragging over their tiles (WING manual
+  5.4: "Touch and drag to select multiple Sources. Parameter changes are applied to all
+  selected Sources"): GAIN (each in its group's range), +48V, POL, MUTE, MONO / STEREO /
+  MID/SIDE, INITIALIZE, colour, icon and mute groups go to all of them; the first one's
+  settings show. A touch selects one source again.
+- Bus to bus from any bus to any other bus (WING manual 5.10, BUS → BUS "from Bus 1-16
+  to BUS 1-16"): the sends of every bus on HOME, SENDS, the fader strips' sends on
+  fader and CONFIG's BUS → BUS. The engine runs a bus after the buses sending to it, so
+  a chain (Bus 2 → Bus 5 → Bus 1) arrives in the same block; a loop (Bus 3 → Bus 7 →
+  Bus 3) is cut at its lowest bus, whose loop send takes the previous block (the WING:
+  8 samples on every bus to bus send). WING REMOTE: `/bus/<n>/send/<m>/on`, `lvl`,
+  `pre` for every pair but a bus to itself.
 - SOLO SAFE on Channel Home (manual 5.5, Fig. 37-39): the MAIN panel follows SOLO MODE.
   LIVE shows SOLO BUS; STUDIO the mains 1-4 in a row with their PRE badges; SIP the
   SOLO SAFE locks on input and aux channels. A closed lock keeps SIP from muting the
@@ -77,6 +115,40 @@ All notable changes to Sidecar are listed here. Versions follow
   lock string `/$ctl/$stat/cnslock`.
 - Tap tempo on the INS 1 / INS 2 screens of HOME, as on EFFECTS: the blank key taps
   the TIME of the delay the insert holds.
+- Custom controls: the OTHER functions WING Edit lists that were missing: TALKBACK A /
+  B (as the TALK keys), GLOBAL MAIN/ALT (manual 5.5 p. 44), **DAW LAYER** (DAW remote
+  control on / off; on the COMPACT, which has no DAW key, the way into DAW mode, manual
+  4.8 p. 27), MONITOR PHONES / SPEAKERS / PH+SPK, CH / BUS / MAIN / MTX SOLO TAP (PFL /
+  AFL) and CH / BUS / MAIN / MTX / DCA METER TAP (PRE / POST). CC EDIT lists the
+  functions and OTHER in WING Edit's order. MONITORING encoders can set PHONES LEVEL.
+- Custom control keys: **CH INSERT PRE / POST ON/OFF** (a strip's INS 1 / INS 2),
+  **FX PAR** (an FX slot's parameter or MIX; a press toggles a switch or steps a list)
+  and **OVERVIEW PAGE** (the OVERVIEW screen of a section on a layer key or bank).
+  Holding a key with a parameter gives it to the encoder above (on the COMPACT, the
+  knob right of the display; manual 4.8 p. 25). An FX PAR key on a delay's TIME taps
+  the tempo, and SETUP > GENERAL > TAP TEMPO FLASH works: OFF, 8X (eight beats after
+  the time changes) or ON. It was only kept.
+- WING COMPACT DCA assignment from the surface (manual 4.2 p. 16): press a DCA key,
+  hold fader 13's SELECT and press the strips' SELECT keys to put them in the DCA or
+  take them out; meanwhile those keys light on the DCA's members.
+- WING COMPACT VIRTUAL section (manual 5.7 p. 61, Fig. 55): the VIEW screens have
+  COMPACT and VIRTUAL at the foot of the layer column. VIRTUAL has eight layers of its
+  own, eight faders wide, empty and unnamed at first; CONFIG fills and renames them.
+  Saved with the show; the full-size console keeps them. WING REMOTE:
+  `/$ctl/layer/VRT/1-8` (names and faders; `sel` and `ofs` on the COMPACT).
+- VIEW > CONFIG with SENDS or BUS -> BUS: **SOURCE CUSTOMIZATION** / **BUS
+  CUSTOMIZATION** (manual 5.10 p. 66, Fig. 60): send faders assigned show their
+  source's or their destination's name, colour and icon, on the surface and the
+  screens. SENDS starts with the **S** item (Fig. 59), the selected channel's send to
+  the destination, which follows the selection. C ABI version 20 (`FaderRefC.flags`,
+  `kFaderSelSend`).
+- WING REMOTE: the custom controls' function nodes (`ch`, `fx`, `par`, `other`, `CCBK`,
+  `area`, `bank`, `pg`, `tgt`, `btn`, `send`, `mgrp`, `dca`, `tag`, `action`, `usbpr`,
+  the MIDI keys' `ch`, `cc`, `note`) are the show's, both ways, with the WING's node ids
+  (one per position for every mode, captured from WING Edit 3.3.4), so WING Edit's CC
+  EDIT shows and sets a function's target and option; before, only its mode. The new
+  key functions are its INS1, INS2, FXPAR and VIEWPAGE modes and OTHER's TBA, TBB,
+  ALTSRC, DAWSW, MONA, MONB, MONAB, CHSOLO ... DCAMTR.
 - Recorder **SETTINGS** (status bar, as on the WING-LIVE screen, manual 8.1 p. 85-86):
   **SHOW METERS** shows or hides the meters of the armed tracks, and **AUTO INPUT
   SELECT** with **[STOP] / [PLAY] / [RECORD] INPUT** (KEEP, MAIN or ALT): when the
@@ -127,7 +199,7 @@ All notable changes to Sidecar are listed here. Versions follow
   (they were only stored), selecting `EXT` as `mdl` makes an outboard insert, and
   outputs patched to `SEND` n carry slot (n+1)/2's send, so WING Edit's EXTERNAL
   EFFECT editor works on it; a slot hosting a plugin still reads as EXT and keeps its
-  plugin. C ABI version 19: `FxParams::sendLeft` / `sendRight`,
+  plugin. C ABI version 21: `FxParams::sendLeft` / `sendRight`,
   `ld_engine_set_io_latency`, `ld_fx_state` 4 / 5 (outboard insert, with a RETURN);
   `ld_fx_latency` gives an outboard insert's latency.
 - Source and output **GLOBAL safes** take effect (manual 5.6 p. 54-55): GLOBAL's
@@ -137,10 +209,16 @@ All notable changes to Sidecar are listed here. Versions follow
   them). Scenes now recall the sources with ROUTING (scenes saved before leave them
   alone). The safes are the console's, saved with the show; WING REMOTE
   `/$ctl/safes/source/*` and `output/*` of those groups set them (they were only
-  stored). C ABI version 19: `ld_engine_io_safe`, `ld_engine_set_io_safe`.
+  stored). C ABI version 21: `ld_engine_io_safe`, `ld_engine_set_io_safe`.
 
 ### Changed
 
+- F1-F3 of the 4-Channel section with USE F1-F3 AS CUSTOM CONTROLS mirror the custom
+  control layers 1-3 (encoders and upper keys), as the manual describes (5.5 p. 48);
+  they were three layers of their own. Shows saved before move those assignments to
+  layers 1-3 where those controls are free. WING REMOTE: `/$ctl/user/U1`-`U4`, `MM`
+  and `D1`-`D4` are the COMPACT's key sets on the full-size console too (WING Edit
+  lists them there); `U1`-`U3` were the F1-F3 layers.
 - SEL DBL CLICK = BUSFX opens INS 1 on mains and matrices too (it did on buses only),
   and INS 2 when INS 1 has no FX (manual 5.5 p. 48).
 - The blank key's LED blinks at the tempo while it can tap one (manual 5.5 p. 48); it
@@ -148,9 +226,34 @@ All notable changes to Sidecar are listed here. Versions follow
 - Surface lock: holding HOME (or Ctrl+L) now also locks the touchscreen and the
   display's knobs, leaving only the keys beside the display to unlock (it locked the
   surface only).
+- A matrix's DIRECT INPUT takes the WING's choices (WING manual 6.4: "AES/EBU, Phones,
+  Speakers or Solo bus"): OFF, AES (no AES/EBU input here: silent), MON.PH, MON.SPK,
+  MON.BUS, a block late (the monitor runs after the matrices), with ON, LEVEL and
+  INVERT; PRE is gone. WING REMOTE: `/mtx/<n>/dir/in`. Shows and scenes saved before,
+  whose direct input took a channel, give that channel a matrix send to the matrix
+  instead (on, at the direct input's level, PRE or post-fader with PAN LINK) when the
+  send is free; an inverted one (a mix-minus) loads not inverted, with a warning.
+- ROUTING > OUTPUTS' USER SIGNAL group holds USR 1-56 (before: the channels' own
+  outputs). Channels' direct outs from older shows still play and show on their
+  outputs; new ones are made with user signals.
+- C ABI version 19: `StripParams::directPre` is gone and `directSource` is the matrix
+  DIRECT IN choice; `UserSignalParams`, `UserPatchParams`, `ld_engine_user_signals`,
+  `ld_engine_user_patches`, `ld_source_set_user_patch`, `ld_engine_output_patch`,
+  `ld_engine_route_output_source`, `ld_engine_clear_output`, `ld_strip_source_input`;
+  `kNumSources` grows by the 56 USR sources.
 
 ### Fixed
 
+- WING REMOTE: a processing or FX model changed right after a client connected (before
+  the first change poll) now sends all of the new model's parameters, as later changes
+  do; parameters that happened to equal the old model's could be left out.
+- The factory DAW layers (DAW 1-4: STOP, PLAY, CYCLE, RECORD ...) show on the surface
+  and on CC EDIT; the custom controls read from the show left out the controls still
+  at their factory assignment, and the next edit saved them empty.
+- ROUTING: the bus, main and matrix tiles (CHANNELS, SELECT MAIN INPUT) and the signal
+  tiles on OUTPUTS have live meters, as the input tiles already had: a strip signal
+  meters the strip's output, a source its peak, PHONES / SPEAKERS the monitor paths.
+  Their meters were drawn but stayed empty.
 - WING Edit (tested with 3.3.4 on both console models): its model request after
   connecting (it sets `/$syscfg/$cnsmdl` to "ModelRequest") is answered with the model,
   and any set Sidecar refuses over the Native protocol now answers the value that

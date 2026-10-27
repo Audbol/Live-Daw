@@ -1127,7 +1127,30 @@ private:
         return juce::jmax (1, (ports + kGroupSize - 1) / kGroupSize);
     }
     int numPlaybackGroups() const { return (Recorder::kNumPlaybackChannels + kGroupSize - 1) / kGroupSize; }
-    int numGroups() const { return numHardwareGroups() + numPlaybackGroups() + 2; }
+    /** After the ports and playback channels: USB PLAYER, OSCILLATOR, then the
+        internal sources (manual 2.6) in pages of 24: BUS 1-12, BUS 13-16, MAIN,
+        MATRIX and the USER SIGNAL group's USR 1-24, 25-48, 49-56. */
+    struct InternalGroup
+    {
+        const char* name;
+        int first, count; // input indices first .. first + count - 1
+    };
+    static const std::vector<InternalGroup>& internalGroups()
+    {
+        static const std::vector<InternalGroup> groups {
+            { "USB PLAYER", UsbRecorder::playerSource (0), UsbRecorder::kNumChannels },
+            { "OSCILLATOR", MixerEngine::oscSource (0), ld::kNumOscillators },
+            { "BUS 1-12", ld::kStripSourceBase, 24 },
+            { "BUS 13-16", ld::kStripSourceBase + 24, 2 * kWingBuses - 24 },
+            { "MAIN", ld::kStripSourceBase + 2 * kWingBuses, 2 * kNumMains },
+            { "MATRIX", ld::kStripSourceBase + 2 * (kWingBuses + kNumMains), 2 * kNumMatrices },
+            { "USR 1-24", MixerEngine::usrSource (0), 24 },
+            { "USR 25-48", MixerEngine::usrSource (24), 24 },
+            { "USR 49-56", MixerEngine::usrSource (48), ld::kNumUsrSources - 48 },
+        };
+        return groups;
+    }
+    int numGroups() const { return numHardwareGroups() + numPlaybackGroups() + (int) internalGroups().size(); }
 
     juce::String groupName (int g) const
     {
@@ -1137,7 +1160,8 @@ private:
             return range ("AUDIO IN ", g * kGroupSize + 1, g * kGroupSize + kGroupSize);
         if (g < hw + numPlaybackGroups())
             return range ("PLAY ", (g - hw) * kGroupSize + 1, juce::jmin (Recorder::kNumPlaybackChannels, (g - hw + 1) * kGroupSize));
-        return g == numGroups() - 1 ? "OSCILLATOR" : "USB PLAYER";
+        const int k = g - hw - numPlaybackGroups();
+        return juce::isPositiveAndBelow (k, (int) internalGroups().size()) ? internalGroups()[(size_t) k].name : "";
     }
 
     /** The source `i` of group `g`, or kNoSource. */
@@ -1151,9 +1175,11 @@ private:
             const int channel = (g - hw) * kGroupSize + i;
             return channel < Recorder::kNumPlaybackChannels ? Recorder::playbackSource (channel) : kNoSource;
         }
-        if (g == numGroups() - 1)
-            return i < ld::kNumOscillators ? MixerEngine::oscSource (i) : kNoSource;
-        return i < UsbRecorder::kNumChannels ? UsbRecorder::playerSource (i) : kNoSource;
+        const int k = g - hw - numPlaybackGroups();
+        if (! juce::isPositiveAndBelow (k, (int) internalGroups().size()))
+            return kNoSource;
+        const auto& internal = internalGroups()[(size_t) k];
+        return i < internal.count ? internal.first + i : kNoSource;
     }
 
     int groupOf (int port) const
@@ -1169,7 +1195,15 @@ private:
     void patch (int port)
     {
         auto& p = strip.params;
-        if (auto* src = ctx.engine.getSource (sourceIndexOf (port)); src != nullptr && src->mode.load() != ld::kSourceMono)
+        if (MixerEngine::isStripSource (port))
+        {
+            // A bus, main or matrix: stereo, L and R (the WING's $BUS... are ST).
+            const int first = port - (port - ld::kStripSourceBase) % 2;
+            p.inputLeft = first;
+            p.inputRight = first + 1;
+            p.stereo = true;
+        }
+        else if (auto* src = ctx.engine.getSource (sourceIndexOf (port)); src != nullptr && src->mode.load() != ld::kSourceMono)
         {
             const int first = MixerEngine::sourcePort (sourceIndexOf (port) & ~1);
             p.inputLeft = first;
@@ -1421,14 +1455,16 @@ public:
 
         if (strip.getKind() == StripKind::Matrix)
         {
-            // engine E11 would add AES/EBU, phones, speakers and solo bus sources.
+            // Manual 6.4: "Direct Input: an additional signal (AES/EBU, Phones,
+            // Speakers or Solo bus)" (/mtx/n/dir/in; AES is silent here).
             directOn = &key ("ON", std::nullopt, colours::accent);
             bindKey (*directOn, p.directOn);
-            directSource = &field ("SOURCE", channelNames (ctx.engine), p.directSource, "NONE");
+            juce::StringArray directInputs;
+            for (int i = 0; i < ld::kNumMatrixDirectInputs; ++i)
+                directInputs.add (MixerEngine::matrixDirectName (i));
+            directSource = &field ("SOURCE", directInputs, p.directSource, {});
             directInvert = &key (juce::String::fromUTF8 ("\xc3\x98 INVERT"), std::nullopt, colours::accent);
             bindKey (*directInvert, p.directInvert);
-            directPre = &key ("PRE", std::nullopt, colours::accent);
-            bindKey (*directPre, p.directPre);
             directLevel = &make<KnobBox> (wingFader ("LEVEL", p.directLevelDb));
         }
     }
@@ -1537,8 +1573,6 @@ public:
                 d.removeFromTop (6);
                 row = d.removeFromTop (kh);
                 directInvert->setBounds (row.removeFromLeft (row.getWidth() * 2 / 3).reduced (0, 0));
-                row.removeFromLeft (6);
-                directPre->setBounds (row);
                 d.removeFromTop (6);
                 directLevel->setBounds (d.removeFromTop (juce::jmin (screenCap (48), d.getHeight())).withWidth (juce::jmin (d.getWidth(), screenCap (150))));
             }
@@ -1613,7 +1647,7 @@ private:
     IconKey *invert = nullptr, *mono = nullptr, *inputSelectLabel = nullptr, *feed = nullptr;
     FeedGrid* feedGrid = nullptr;
     IconKey *loCut = nullptr, *hiCut = nullptr, *tool = nullptr;
-    IconKey *directOn = nullptr, *directInvert = nullptr, *directPre = nullptr;
+    IconKey *directOn = nullptr, *directInvert = nullptr;
     ChoiceField* directSource = nullptr;
     KnobBox* directLevel = nullptr;
     Segmented *inputSel = nullptr, *selectMode = nullptr;
@@ -4222,8 +4256,8 @@ public:
             for (int i = 0; i < (int) buses.size() && i < 16; ++i)
             {
                 auto& bus = *buses[(size_t) i];
-                // Buses 9+ can feed buses 1-8; the others are shown empty.
-                const bool possible = &bus != &strip && ! (strip.isBus() && ! (strip.getId() >= kBusToBusTargets && bus.getId() < kBusToBusTargets));
+                // A bus feeds every other bus (manual 5.10); its own column is shown empty.
+                const bool possible = &bus != &strip && ! (strip.isBus() && ! busFeedsBus (strip.getId(), bus.getId()));
                 auto* send = &strip.sends[(size_t) bus.getId()];
                 auto* col = &make<SendColumn> (strip, bus, send, nullptr, possible, [this, i] { select (i); });
                 const bool self = &bus == &strip;
@@ -4232,8 +4266,7 @@ public:
                     // WING 3.0: "Warning when a bus is sent to the same bus (feedback loop)".
                     popups::warn (*this, "FEEDBACK LOOP",
                                   self ? "A bus can't send to itself: the send would feed its own input."
-                                       : "Only buses 9-16 can send to buses 1-8: a send from " + shortLabel (strip) + " to " + name
-                                             + " could feed back into itself.");
+                                       : "A send from " + shortLabel (strip) + " to " + name + " isn't possible.");
                 };
                 col->onModeChanged = [this] (int mode)
                 {
@@ -4675,7 +4708,7 @@ void copyStripParams (MixerEngine& engine, const Strip& src, const Strip& dst, j
             const int id = bus->getId();
             if (bus.get() == &dst || dst.getKind() == StripKind::Main || dst.getKind() == StripKind::Matrix)
                 continue;
-            if (dst.isBus() && ! (dst.getId() >= kBusToBusTargets && id < kBusToBusTargets))
+            if (dst.isBus() && ! busFeedsBus (dst.getId(), id))
                 continue;
             auto* from = src.sends.find (id);
             if (from == nullptr && dst.sends.find (id) == nullptr)
@@ -5318,7 +5351,7 @@ private:
         pan = 0.0f;
         if (dst.isBus())
         {
-            if (&src == &dst || (src.isBus() && ! (src.getId() >= kBusToBusTargets && dst.getId() < kBusToBusTargets)))
+            if (&src == &dst || (src.isBus() && ! busFeedsBus (src.getId(), dst.getId())))
             {
                 possible = false;
                 return;

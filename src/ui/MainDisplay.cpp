@@ -1214,6 +1214,12 @@ DisplayPage* MainDisplay::page (Screen s) const
     return home.get();
 }
 
+void MainDisplay::showOverviewPage (LayerSet::Section s, int bank)
+{
+    overview->showOverviewBank (s, bank);
+    showScreen (Screen::Overview);
+}
+
 void MainDisplay::showScreen (Screen s)
 {
     screen = s;

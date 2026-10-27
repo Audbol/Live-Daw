@@ -25,7 +25,7 @@ use livedaw_engine::params::{
     TapEqParams,
 };
 use livedaw_engine::params::{MonitorPathParams, MonitorSourceParams};
-use livedaw_engine::sources::SourceParams;
+use livedaw_engine::sources::{SourceParams, UserPatchParams, UserSignalParams};
 use livedaw_engine::talk::{TalkParams, TalkPathParams};
 use livedaw_engine::{pdc_tap, Engine, EngineControls, InsertCallbacks, SendParams, Strip, StripKind, StripMeters, StripParams};
 use std::mem::{offset_of, size_of};
@@ -39,10 +39,17 @@ use std::sync::Arc;
 // ABI 17: ld_wing_set_black_finish ("wing-bk"); LdSpill kind 5 = a main's sources.
 // ABI 18: show items (ld_scene_item_*, ld_show_add_item, ld_show_add_snippet_scene,
 // ld_show_take_clips, ld_show_apply_library) and ld_rec_set_range (MODE A->B).
-// ABI 19: FxParams::send_left / send_right (the EXT device's outboard insert:
+// ABI 19: routing: StripParams loses direct_pre and direct_source is the
+// matrix DIRECT IN choice; the USR sources (UserSignalParams, UserPatchParams,
+// ld_engine_user_signals ...), the output patch (ld_engine_output_patch,
+// ld_engine_route_output_source, ld_engine_clear_output), strip sources
+// (ld_strip_source_input); kNumSources grows by the 56 USR sources.
+// ABI 20: LdFaderRef gains `flags` (bit 0: BUS CUSTOMIZATION of a send fader)
+// and kind 9 = the selected channel's send; the layout info checks its size.
+// ABI 21: FxParams::send_left / send_right (the EXT device's outboard insert:
 // FX SEND outputs), ld_engine_set_io_latency, source and output recall safes
 // (ld_engine_io_safe, ld_engine_set_io_safe).
-pub const LD_ABI_VERSION: i32 = 19;
+pub const LD_ABI_VERSION: i32 = 21;
 
 fn guard<T>(default: T, f: impl FnOnce() -> T) -> T {
     catch_unwind(AssertUnwindSafe(f)).unwrap_or(default)
@@ -157,7 +164,14 @@ pub struct LdLayoutInfo {
     pub off_dca_mon: i32,
     // ABI 16: the console model (ld_console_model_info, ld_layers_set_model, ld_wing_set_model)
     pub console_model_info: i32,
-    // ABI 19: an FX slot's FX SEND outputs
+    // ABI 19: routing (matrix DIRECT IN, USR sources)
+    pub off_direct_source: i32,
+    pub user_signal: i32,
+    pub off_user_signal_post: i32,
+    pub user_patch: i32,
+    // ABI 20: send faders with BUS CUSTOMIZATION, the selected channel's send
+    pub fader_ref: i32,
+    // ABI 21: an FX slot's FX SEND outputs
     pub off_fx_send_left: i32,
 }
 
@@ -246,6 +260,11 @@ pub unsafe extern "C" fn ld_layout_info(out: *mut LdLayoutInfo) {
         off_cust_link: offset_of!(StripParams, cust_link) as i32,
         off_dca_mon: offset_of!(DcaParams, mon) as i32,
         console_model_info: size_of::<session::LdConsoleModelInfo>() as i32,
+        off_direct_source: offset_of!(StripParams, direct_source) as i32,
+        user_signal: size_of::<UserSignalParams>() as i32,
+        off_user_signal_post: offset_of!(UserSignalParams, post) as i32,
+        user_patch: size_of::<UserPatchParams>() as i32,
+        fader_ref: size_of::<session::LdFaderRef>() as i32,
         off_fx_send_left: offset_of!(FxParams, send_left) as i32,
     };
 }
@@ -580,7 +599,7 @@ pub unsafe extern "C" fn ld_fx_latency(e: *const Engine, slot: i32) -> i32 {
     }
 }
 
-/// Any thread (ABI 19): the audio interface's reported input + output latency
+/// Any thread (ABI 21): the audio interface's reported input + output latency
 /// in samples, part of an outboard insert's round trip (with one block).
 #[no_mangle]
 pub unsafe extern "C" fn ld_engine_set_io_latency(e: *const Engine, samples: i32) {
@@ -589,7 +608,7 @@ pub unsafe extern "C" fn ld_engine_set_io_latency(e: *const Engine, samples: i32
     }
 }
 
-/// Recall safes of sources and outputs (ABI 19, GLOBAL SAFE): `kind` 0 = a
+/// Recall safes of sources and outputs (ABI 21, GLOBAL SAFE): `kind` 0 = a
 /// source (its table index, `sources::source_index`), 1 = a hardware output
 /// port. -1 as the index: any of that kind is safe.
 #[no_mangle]

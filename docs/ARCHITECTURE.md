@@ -11,7 +11,9 @@ Rust; audio devices, plugin hosting and the UI are C++ with JUCE.
        │           USB PLAYER 1-4 (input 0x20000 + n-1), OSC 1-2 (input 0x30000 + n-1)
        │                 │
        ▼                 ▼   sources: gain · mute · Ø · MONO / STEREO / MID-SIDE pairs
-       │                 │
+       │                 │   USR 25-56 user patches (input 0x50000 + 24..55): copies of ports
+       │                 │   ┄┄ one block late (return rings): BUS / MAIN / MTX signals
+       │                 │      (input 0x40000 + n), USR 1-24 user signals (0x50000 + n)
        ▼                 ▼   (each input / aux channel: MAIN or ALT source, INPUT SELECT)
 ┌──────────── input channels and aux (parallel stage 1) ─────────────────────────────────┐
 │ channel: INPUT trim · balance · Ø ─ IN ─ FILTER ─ FILT                                 │
@@ -23,19 +25,22 @@ Rust; audio devices, plugin hosting and the UI are C++ with JUCE.
     │ bus sends (TAP/PRE at the tap     │ main sends (pre: tap, else out) │ matrix sends, direct outs
     │ point, POST, GROUP)               │                                │
     ▼                                   │                                │
- buses 9+  (parallel stage 2) ──► sends │                                │
-    ▼                                   │                                │
- buses 1-8 (parallel stage 3)           │                                │
+ buses (parallel stage 2/3, in waves:   │                                │
+   a bus after the buses sending to it; │                                │
+   a send closing a loop: a block late) │                                │
     ▼                                   ▼                                │
  mains 1-4 (parallel stage 4: inputs + buses)                            │
     ▼                                                                    ▼
- matrices 1-8 (parallel stage 5: inputs, buses, mains + a direct input from any channel)
+ matrices 1-8 (parallel stage 5: inputs, buses, mains + DIRECT IN: the PHONES, SPEAKERS
+    │          or solo bus of the previous block)
     │       (talkback: the talk channel's PFL into the buses / matrices / mains of TALK A, B)
+ user signals USR 1-24 copy their strips (PRE: the tap, POST) ─► source processing
  solo (PFL/AFL per strip type, routed by SOLO MODE) ─► monitor paths SPEAKERS and PHONES:
     solo bus + SOURCE (Main 1 by default; SRC MIX while soloing) + DIRECT IN ─► EQ
     ─ PAN / WIDTH ─ INVERT ─ DELAY ─► level (+ MON DCAs) · DIM · mute · talk MON DIM
     · MONO / SWAP (on the selected path) ─► LIMITER ─► its outputs
- every strip, and each outboard insert's FX SEND ─► its hardware outputs ─► output protection
+ every strip ─► its hardware outputs; the output patch: sources (ports, USR ...) straight
+    to outputs; each outboard insert's FX SEND ─► output protection (safety clip)
  RECORDER 1-4 (the USB recorder) tap strip outputs or sources after stage 6
 
  bus / main / matrix strip:
@@ -59,7 +64,7 @@ Rust; audio devices, plugin hosting and the UI are C++ with JUCE.
   fader; everything else delays after INS 2.
 - Buses, mains and matrices use the 8-band bus EQ table. `ld_strip_response` draws the
   EQ alone, so its graph doesn't depend on where the EQ sits.
-- PFL solo, direct outs, the matrix direct input (`direct_pre`) and the pre-fader meter
+- PFL solo, direct outs and the pre-fader meter
   (`StripMeters::pfl_peak`) read the PFL copy; AFL solo and post-fader sends read the
   output. `trim_peak` measures after trim, `input_peak` before it.
 - Pan laws (`livedaw-dsp/util.rs`): a mono strip pans with the WING's law
@@ -76,9 +81,54 @@ Rust; audio devices, plugin hosting and the UI are C++ with JUCE.
   reads after INS 2 and the delay, panned with the send pan (linked, linked reversed or
   its own). GROUP reads the panned output at unity: it has no send level.
 - Bus sends are stored in a paged `SendBank`, so buses can be added beyond the WING's
-  16. Buses 9 and up can feed buses 1-8 (`BUS_TO_BUS_TARGETS`).
-- A matrix's direct input takes any channel's PFL or output; inverted, it builds a
-  mix-minus.
+  16. Every bus feeds every other bus (`routing::bus_feeds_bus`; manual 5.10).
+- **Routing beyond the strips' own patch** (`routing.rs`, manual 2.6, 5.4, 6.4, 6.6):
+  - *Return rings.* Signals from later in the chain are read one block late through a
+    `ReturnRing`: two device blocks per channel, each sample stored twice (any block is
+    one contiguous slice), all rings written at one `ReturnClock` position per chunk
+    and read one block (`max_block` samples) behind it. The delay is constant whatever
+    the chunk lengths (the recorder shortens chunks), and the read window never
+    overlaps the write window, so a reader may run while the writer runs. A
+    bus, main or matrix keeps OUT and TAP rings (`Strip::write_returns`), written only
+    while a reader asks for them this block (`want_return` before the stages,
+    `commit_returns`: a ring that starts being written starts silent); the matrices'
+    DIRECT IN reads the monitor paths' rings, the channels the user signals' ring.
+    The processing order therefore never has a cycle; feedback through these paths
+    recirculates once per block, as the WING allows it (with its 8 / 38 samples).
+  - *Strip sources*: input `STRIP_SOURCE_BASE` (0x40000) + n is the WING's `$BUS`
+    (n 0-31: slot * 2 + side), `$MAIN` (32-39) and `$MTX` (40-55) signal: a channel
+    hears the strip's output (after pan) one block late (the WING: 38 samples). Before
+    stage 1 the audio thread marks the strips the channels' active inputs (and SOURCE
+    SOLO) name, and hands the channels pointers into their rings (`SourceDsp`'s
+    internal pointer list, `sources::internal`). Only the WING's 16 buses are sources.
+  - *USR sources* (`sources.rs`, input `USR_SOURCE_BASE` 0x50000 + n, table entries
+    after the oscillators): USR 25-56, the user patches, copy a processed external
+    source (a port, playback channel or the USB player) and are processed with the
+    sources before stage 1, in the same block. USR 1-24, the user signals, copy a strip
+    (`UserSignalParams`: group, number, side, PRE = the tap signal / POST = an input's
+    post-fader signal before its pan, a bus's, main's or matrix's output; L+R = half of
+    each side) after stage 6 (`Engine::user_signals`), get their source processing
+    there, and go to the outputs and the RECORDER in that block and into a ring the
+    channels read the next block.
+  - *The output patch* (`OutputPatch`, 576 `AtomicI32`s, `ld_engine_output_patch`): a
+    source per hardware output, added after the strips in `write_outputs` (the source
+    processed: gain, mute, polarity). `Engine::route_output_source` keeps one source per
+    output: it clears the strips and monitor paths routed there (`clear_output`), and a
+    bus, main or matrix signal goes to the strip's own output instead.
+  - *Bus to bus* (`BusSchedule`): each block the audio thread orders the buses by
+    their enabled bus-to-bus sends into waves (Kahn's algorithm on 64-bit masks, no
+    allocation): a bus runs in a wave after every bus feeding it, so chains arrive in
+    the same block; when only loops remain, the lowest-numbered bus left runs next and
+    the sends that close the loop read their source's previous block (OUT for POST /
+    GROUP, TAP for PRE; the send's own pan balances it; the source's own MUTE cuts a
+    PRE one), never its buffers, which may be running. Without bus-to-bus sends the
+    bus stage is one wave (one fork/join); delay compensation (`update_pdc`) walks the
+    same order and leaves the loop sends out.
+  - *Matrix DIRECT IN* (`StripParams::direct_source`, `MATRIX_DIRECT_INPUTS`): OFF,
+    AES (none here: silent), MON.PH / MON.SPK (the path after its limiter) or MON.BUS
+    (the selected path's solo bus before its SOURCE), from the monitor rings, a block
+    late; ON, level and INVERT as before. Shows from before (a channel's index)
+    become that channel's matrix send (`console::apply_legacy_direct_input`).
 - INS 2 of input channels can run an FX slot or join automix group X or Y (each with its
   ENABLE switch in `EngineControls::automix_enable`). The audio thread computes the
   gain sharing between stages 1 and 2 (`engine.rs`, `automix`) from the post-fader level,
@@ -104,6 +154,11 @@ Rust; audio devices, plugin hosting and the UI are C++ with JUCE.
   the half of the current block while same-wave readers take the other, so parallel
   strips never share memory being written. An idle (unpatched) source writes
   silence. Without keys from other channels stage 1 is one wave, as before.
+  Aux, bus, main and matrix DYNAMICS keyed from an aux, bus, main or matrix take
+  this block's tap when the source runs in an earlier stage of the block
+  (`keytap::stage_of`: aux, then the buses by their wave of this block's
+  `BusSchedule`, mains, matrices), else the previous block's; a bus's key never
+  changes the bus order.
 - **Sources** (`sources.rs`): every hardware input port (the first 576) and playback
   channel has a source with gain, mute, polarity, +48 V (stored only), colour, icon,
   name and a pairing with its neighbour (ports 1-2, 3-4, ...: STEREO, or MID/SIDE
@@ -212,7 +267,7 @@ views after a show load changes the console from Rust.
   engine controls are `#[repr(C)]` blocks of atomics owned by Rust. C++ sees the same
   memory as `std::atomic<float/bool/int32_t>` structs, and the UI writes them directly
   with no FFI call. Both sides describe the layout; `ld::verifyLayout()` compares the
-  two at startup and in the tests (ABI version 19), and the app refuses to run if they
+  two at startup and in the tests (ABI version 21), and the app refuses to run if they
   differ.
 - **FX slots.** The 16 slots are the WING's FX rack. Each holds one device from the
   console's FX table (`FX_MODELS`, generated like the processing models): the 26
@@ -266,7 +321,7 @@ views after a show load changes the console from Rust.
     `egrp`/`ein` and, STEREO or MID/SIDE, the next one (`ext_return_input`, the same
     mapping as the remote's patch), decoded back to L/R. The output stage adds each
     slot's send of this block to the ports in `FxParams::send_left` / `send_right`
-    (ABI 19; WING FX SEND 2n-1 / 2n, ROUTING > OUTPUTS), like a strip's outputs. No
+    (ABI 21; WING FX SEND 2n-1 / 2n, ROUTING > OUTPUTS), like a strip's outputs. No
     allocation or lock: the buffers are sized in `prepare`. The send leaves in this
     block and can only return in a later one, so the slot's latency is the round
     trip (`Engine::set_io_latency`: one block plus the interface's reported input
@@ -330,10 +385,11 @@ completed a full cycle, so no running callback can still hold a pointer to them.
 `WorkerPool::parallel_for` is a fork/join with no allocation. The audio thread
 publishes a job (generation, task count and next index packed into one 64-bit atomic),
 wakes the workers (spin, then park/unpark) and helps with the work itself. Each block
-has five parallel stages: channels and aux, buses 9+, buses 1-8, mains, matrices.
+has four parallel stages: channels and aux, buses, mains, matrices.
 Channels and aux run in more than one fork/join (waves) only when keys come from
-other channels (*KEY TAP* above).
-Automix, the monitor and writing the outputs run on the audio thread.
+other channels (*KEY TAP* above), buses only when buses send to buses (*Bus to
+bus* above).
+Automix, the user signals, the monitor and writing the outputs run on the audio thread.
 
 ## Recorder
 
@@ -536,8 +592,11 @@ Show
 - The console also keeps the console-level state of `livedaw-session/src/globals.rs`:
   SOLO MODE, the solo bus, MUTEGROUP/SIP OVERRIDE and SOURCE SOLO, talkback, the
   strips' talk tags and the sources (only those that differ from the defaults, with
-  their mute groups). The monitor paths (sources, PHONES, each path's processing as
-  `<Dsp>`) are part of the monitor setup, which scenes recall with ROUTING.
+  their mute groups; the USR sources' with them). The monitor paths (sources, PHONES,
+  each path's processing as `<Dsp>`) are part of the monitor setup, which scenes
+  recall with ROUTING, like `<Patch>` (`globals::capture_routing`): the output patch
+  and what each user signal and user patch copies; a state without it (older) leaves
+  them as they are, a show without it loads them OFF.
 - Scene recall applies the state within the scene's scope and skips recall-safe strips.
   It then applies the scene's auto-fire snippets.
 - Snippets ignore recall safes, which makes them the tool for deliberately changing a
@@ -875,7 +934,7 @@ dependencies beyond the other Sidecar crates.
   value (`data/wing_factory.tsv`, written from a console dump by
   `examples/wing_factory.rs`) and live in a **shadow store** (`WingState`) so
   clients and snapshots read back what they wrote; they do nothing.
-  `map::coverage()` counts what maps (68,555 of 68,556 leaves; 61,108 engine-backed).
+  `map::coverage()` counts what maps (79,325 of 79,326 leaves, the processing models' and the custom control modes' parameters counted; 73,573 engine- or show-backed).
   `tests/data/wing_desc.tsv` holds the same console's descriptions, which a unit
   test compares with every parameter's.
   The console level maps too: TAP WIDTH / TAP EQ (`/ch/N/tapwid`, `peq`), `/cfg/solo`
@@ -924,13 +983,18 @@ dependencies beyond the other Sidecar crates.
   controls and refreshes the fader sections). Until a show is attached the nodes are
   shadow. The console model and the black finish are in `WingState` too
   (`set_console_model`, `set_black_finish`): they set the identity (`ngc-full` /
-  `wing-fullsize`, `wing-bk` for the black full-size WING, `wing-compact`) and
-  which custom control layers `U1`-`U4`, `MM` and `D1`-`D4` are. The module docs
-  list the meanings taken from the protocol document and
-  the guesses (fader encoding, `U1`-`U3`). Not mapped: the Compact, Rack, EXT and
-  VRT layers, the button and 4-Channel section modes, LEDs, GPIO keys, the DAW
-  keys' `btn` and the mode-dependent target nodes, which libwing's tree does not
-  list.
+  `wing-fullsize`, `wing-bk` for the black full-size WING, `wing-compact`).
+  `U1`-`U4`, `MM` and `D1`-`D4` are the COMPACT's key sets on either model, and
+  `VRT` the virtual layers. A key's or encoder's mode-dependent nodes (its
+  function's targets and options: `ch`, `fx`, `par`, `other` ...) share one id per
+  position across the modes, like the processing models' parameters: `schema.rs`
+  adds those slots (a family for the keys and one for the encoders, the modes as
+  models, the nodes from the protocol document's tables) from
+  `data/wing_cc_ids.tsv`, ids captured from WING Edit, since libwing's sweep only
+  caught the modes its console had set; `surface.rs` maps them to the show's
+  functions. The module docs list the meanings taken from the protocol document
+  and the guesses (fader encoding). Not mapped: the Compact's, Rack's and EXT
+  layers, the button and 4-Channel section modes, LEDs and GPIO keys.
 - **Servers** (`server.rs`, `osc.rs`, `native.rs`, `meters.rs`). Plain `std::net`
   threads, started and stopped from the app: discovery (UDP), OSC (UDP), the native
   protocol (TCP, one thread per client, up to 16; meters as UDP datagrams) and a
