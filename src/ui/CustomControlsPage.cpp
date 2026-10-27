@@ -460,8 +460,9 @@ void press (UiContext& ctx, const Function& f)
             {
                 // A delay's TIME: the time between two taps (0.1 to 3 s), as the blank key.
                 if (const auto interval = tapState (f.target).tempo.tap (juce::Time::getMillisecondCounterHiRes()))
-                    if (const auto* p = fxParamOf (ctx, f.target, f.option))
-                        ctx.engine.getFx().params (f.target).values[f.option].store (juce::jlimit (p->min, p->max, *interval));
+                    if (fxParamOf (ctx, f.target, f.option) != nullptr)
+                        ctx.engine.getFx().params (f.target).values[f.option].store (
+                            TapTempo::valueForMs (ctx.engine.getFx().getModel (f.target), f.option, *interval));
                 break;
             }
             // A switch toggles, a list steps on (round); a continuous
@@ -711,7 +712,7 @@ int ledState (UiContext& ctx, const Function& f)
         if (flash == 0)
             return 0;
         auto& state = tapState (f.target);
-        const float time = ctx.engine.getFx().params (f.target).values[f.option].load();
+        const float time = TapTempo::msOf (ctx.engine.getFx().getModel (f.target), f.option, ctx.engine.getFx().params (f.target).values[f.option].load());
         const double now = juce::Time::getMillisecondCounterHiRes();
         if (time != state.time)
         {

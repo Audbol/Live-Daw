@@ -109,6 +109,23 @@ public:
             using ui::TapTempo;
             expect (TapTempo::timeParam (models::findModel (models::Fx, "ST-DL")) >= 0, "a delay has a TIME");
             expectEquals (TapTempo::timeParam (models::findModel (models::Fx, "PLATE")), -1);
+            // Every delay taps, the pitch devices' DELAY doesn't; the dials take the tap as their time.
+            for (auto* token : { "TAP-DL", "TAPE-DL", "DEL/REV", "OILCAN", "BBD-DL" })
+                expect (TapTempo::timeParam (models::findModel (models::Fx, token)) >= 0, token);
+            expectEquals (TapTempo::timeParam (models::findModel (models::Fx, "PITCH")), -1);
+            for (auto [token, lo, hi] : { std::tuple { "OILCAN", 60.0f, 480.0f }, { "BBD-DL", 20.0f, 600.0f } })
+            {
+                const int m = models::findModel (models::Fx, token);
+                const int p = TapTempo::timeParam (m);
+                const auto& spec = models::model (models::Fx, m).params[(size_t) p];
+                expectWithinAbsoluteError (TapTempo::valueForMs (m, p, lo), spec.min, 1.0e-3f);
+                expectWithinAbsoluteError (TapTempo::valueForMs (m, p, hi), spec.max, 1.0e-3f);
+                expectWithinAbsoluteError (TapTempo::msOf (m, p, TapTempo::valueForMs (m, p, 250.0f)), 250.0f, 0.05f);
+            }
+            {
+                const int m = models::findModel (models::Fx, "TAPE-DL");
+                expectWithinAbsoluteError (TapTempo::valueForMs (m, TapTempo::timeParam (m), 400.0f), 400.0f, 1.0e-3f);
+            }
             TapTempo t;
             expect (! t.tap (10000.0).has_value(), "the first tap counts in");
             expectWithinAbsoluteError (t.tap (10500.0).value_or (0.0f), 500.0f, 0.01f);

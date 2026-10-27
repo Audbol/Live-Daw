@@ -45,7 +45,7 @@ enum class GraphKind
               // the range each band can move through and where it is now (cut or boost)
     Response, // the model's frequency response as set (models::modelResponse); no params
     Taps,     // delay echoes. choice 0: time, feedback (repeats of one tap);
-              // 1: time, repeats, slope dB, pre-delay (a row of taps); 2: time, feedback, factor, pattern ("a:b", L and R)
+              // 1: time, repeats, slope dB, pre-delay, [factor] (a row of taps over time x factor); 2: time, feedback, factor, pattern ("a:b", L and R)
     Decay,    // reverb envelope. choice 0: pre-delay, decay (s); 1 (gated): pre-delay, attack, decay; 2 (reverse): pre-delay, rise, decay
               // 3: an envelope follower's attack, hold, release (ms)
     Lfo,      // modulation: speed (Hz), depth, [phase deg], [wave]; L and R traces
@@ -111,6 +111,7 @@ enum class Look
     VuCream,    // amber arched face in a black housing
     VuRound,    // round window: amber scale over black, glowing rim (colour)
     VuOrange,   // backlit orange face, black housing with a chrome edge
+    PanWindow,  // a narrow window with a needle swinging from its foot between L (-1), C and R (1): the readout `meter` as it comes
     // Boxes
     Fill,       // flat fill (colour), optional outline (colour2)
     Bevel,      // raised plate (colour) with a highlight and shadow
@@ -178,6 +179,7 @@ struct Element
     bool level = false;      // the readout is a level (linear): shown in dB (Vu, Leds, Lamp: lit at `range` dB and up)
                              // else a reduction in dB (<= 0; Lamp: lit at `range` dB of reduction and more)
     float factor = 1.0f;     // Value: shows the parameter's value times this (a band's frequency from TUNE)
+    std::vector<juce::uint32> ledColours; // Leds: a colour per LED (else `colour`)
     juce::StringArray scale; // Vu labels / LED captions
     std::vector<float> marks; // Vu label positions (gain reduction dB) / LED thresholds
     float range = 20.0f;     // Vu: dB at the end of the scale
@@ -332,6 +334,35 @@ struct Design
         e.marks = std::move (thresholds);
         e.vertical = vert;
         e.colour = juce::Colour (colour);
+        return e;
+    }
+    /** A level meter of `n` bar segments, centres from `top` to `bottom` at
+        `cx`, `w` wide, lit by level readout `readout` (rd::) in dBFS by the
+        scale printed beside it: `scaleDb` (dBFS) at `scaleY` (top down),
+        interpolated. */
+    Element& ladder (int readout, float cx, float w, float top, float bottom, int n, const std::vector<float>& scaleDb,
+                     const std::vector<float>& scaleY, juce::uint32 colour)
+    {
+        std::vector<float> marks;
+        for (int k = 0; k < n; ++k)
+        {
+            const float y = top + (bottom - top) * (float) k / (float) juce::jmax (1, n - 1);
+            float db = scaleDb.back();
+            for (size_t i = 1; i < scaleY.size(); ++i)
+                if (y <= scaleY[i])
+                {
+                    const float t = juce::jlimit (0.0f, 1.0f, (y - scaleY[i - 1]) / (scaleY[i] - scaleY[i - 1]));
+                    db = scaleDb[i - 1] + t * (scaleDb[i] - scaleDb[i - 1]);
+                    break;
+                }
+            marks.push_back (y <= scaleY.front() ? scaleDb.front() : db);
+        }
+        auto& e = add (Type::Leds, cx - w * 0.5f, top, w, bottom - top);
+        e.marks = std::move (marks);
+        e.vertical = true;
+        e.dots = false;
+        e.colour = juce::Colour (colour);
+        e.reads (readout, true);
         return e;
     }
     Element& lamp (float cx, float cy, float d, juce::uint32 colour, int param = -1)

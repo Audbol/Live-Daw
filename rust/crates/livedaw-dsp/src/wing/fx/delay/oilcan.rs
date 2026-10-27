@@ -91,7 +91,6 @@ impl FxAlgo for Oilcan {
     }
 
     fn process(&mut self, left: &mut [f32], right: &mut [f32]) {
-        self.cut.update(left.len());
         let [d0, d1, d2] = self.depth;
         for (l, r) in left.iter_mut().zip(right.iter_mut()) {
             let d = self.time.tick();

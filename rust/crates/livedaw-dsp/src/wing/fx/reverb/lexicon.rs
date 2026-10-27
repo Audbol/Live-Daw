@@ -113,7 +113,7 @@ impl FxAlgo for Lexicon {
         match self.kind {
             Kind::Hall => {
                 s.size_ms = 10.0 + 1.2 * p.f("size");
-                let t60 = p.f("dcy") * size_scale(s.size_ms, 82.0);
+                let t60 = p.f("dcy") * size_scale(s.size_ms, 70.0);
                 s.decay = Decay::lexicon(t60, p.f("mult"), 500.0, damp);
                 s.shape = p.f("shp") / 250.0;
                 s.build_ms = build_time(p.f("sprd"), s.size_ms);
@@ -124,10 +124,11 @@ impl FxAlgo for Lexicon {
             Kind::Room | Kind::Chamber | Kind::Plate => {
                 let plate = self.kind == Kind::Plate;
                 s.size_ms = p.f("size") * if plate { 1.4 } else { 1.94 };
+                // The default SIZE (ROOM 50 m, CHAMBER 25 m, PLATE 20 m).
                 let reference = match self.kind {
-                    Kind::Room => 38.8,
-                    Kind::Chamber => 58.2,
-                    _ => 42.0,
+                    Kind::Room => 97.0,
+                    Kind::Chamber => 48.5,
+                    _ => 28.0,
                 };
                 let t60 = p.f("dcy") * size_scale(s.size_ms, reference);
                 s.decay = Decay::lexicon(t60, p.f("mult"), 600.0, damp);
@@ -155,7 +156,7 @@ impl FxAlgo for Lexicon {
             }
             Kind::Concert => {
                 s.size_ms = 2.0 * p.f("size");
-                let t60 = p.f("dcy") * size_scale(s.size_ms, 90.0);
+                let t60 = p.f("dcy") * size_scale(s.size_ms, 100.0);
                 s.decay = Decay::lexicon(t60, p.f("mult"), 500.0, damp);
                 let depth = (p.f("depth") - 1.0) / 15.0;
                 s.shape = (0.8 * p.f("shp") / 50.0 + 0.3 * depth).min(1.0);
@@ -179,7 +180,7 @@ impl FxAlgo for Lexicon {
             Kind::Ambience => {
                 let size = p.f("size");
                 s.size_ms = 14.0 + 0.6 * size;
-                let t60 = p.f("dcy") * size_scale(s.size_ms, 32.0);
+                let t60 = p.f("dcy") * size_scale(s.size_ms, 50.0);
                 s.decay = Decay::lexicon(t60, 1.0, 500.0, damp);
                 s.shape = 0.2;
                 s.build_ms = 4.0 + 0.85 * size;

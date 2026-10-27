@@ -7,6 +7,16 @@ All notable changes to Sidecar are listed here. Versions follow
 
 ### Added
 
+- **The meters on the reverb, delay, modulation and pitch pages move with the
+  effect**: VINTAGE ROOM's INPUTS / OUTPUTS ladders, DIMENSION CRS's OUTPUT ladder,
+  TAPE DELAY's two VUs (the record level onto each tape), VINTAGE PLATE's VU (the
+  drive into the plate), STEREO DELAY's level tube, DUAL PITCH's output LEDs,
+  TREMOLO/PANNER's L-C-R needle, the envelope graphs of PHASER and TREMOLO/PANNER
+  (filled to the envelope's level) and PITCH FIX's LED over the note it hears, through
+  the FX slots' readouts (`ld_fx_readouts`). The modulation devices report their LFO's
+  position, envelope and needle; an LFO graph shows where the LFO is.
+- Tap tempo also sets OILCAN DELAY's TIME dial and BBD DELAY's DELAY dial (their
+  delay time from the taps); the pitch devices' DELAY no longer takes the tap.
 - **Live meters on the FX pages** (dynamics, EQ and utility devices, channel strips,
   EXTERNAL): C5-COMBINATOR's band screen shows each band at its gain as it is now
   (n-GAIN plus its live gain reduction and SBC makeup) over the input's third-octave
@@ -294,6 +304,14 @@ All notable changes to Sidecar are listed here. Versions follow
 
 ### Changed
 
+- The 480L-style reverbs (HALL, ROOM, CHAMBER, PLATE, CONCERT, AMBIENCE) ring for
+  their DECAY at the console's default SIZE (ROOM rang 1.6 times longer at its default
+  50 m: a 2.5 s DECAY lasted about 4 s). SIZE still scales the decay from there.
+- The reverbs start at PRE DLY: the early build-up (SHAPE / SPREAD) is heard from the
+  pre-delay on instead of only once the tank answers, 20-80 ms later (HALL began about
+  40 ms after PRE DLY, ROOM 75 ms). AMBIENCE's early sound reaches both sides from
+  either input.
+
 - A RATIO picked from a list reads "3:1" everywhere when the ratio is whole (an
   expander's "1:3"; a WING's owner), "2.5:1" or "1.43:1" when it isn't: also on the
   knobs, the FX rack's tiles and a fader strip with an FX parameter, which showed
@@ -501,6 +519,13 @@ All notable changes to Sidecar are listed here. Versions follow
   SPILL (AREA, then one TARGET list: DCA, FX, BUS, MAIN, MTX, AUTOMIX, the selected
   channel).
 ### Fixed
+
+- Turning a LO CUT / HI CUT on STEREO PITCH, DUAL PITCH, STEREO DELAY, ULTRATAP,
+  CHORUS, FLANGER or OILCAN clicked (the filters jumped once per block); they glide
+  smoothly now. GATED REVERB's DENSITY, the pitch devices' DELAY (a bend now, like a
+  tape delay, instead of a smear) and the amps' tone knobs clicked too.
+- The effects no longer slow down on silent tails where nothing else flushes
+  denormal numbers (offline renders, the model response graphs).
 
 - PRECISION LIMITER: its 1 ms look-ahead is now reported as the slot's latency (delay
   compensation) and FX MIX delays the dry signal by it; below 100 % MIX the dry and

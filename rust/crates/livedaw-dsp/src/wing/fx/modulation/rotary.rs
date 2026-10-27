@@ -1,7 +1,8 @@
 //! ROTARY: a Leslie 122 style rotating speaker.
 
 use crate::wing::fx::blocks::{fast_tanh, DelayLine, OnePole, Smoothed, Svf};
-use crate::wing::fx::{FxAlgo, FxContext};
+use crate::wing::fx::readout::{LFO_L, LFO_R, NEEDLE};
+use crate::wing::fx::{FxAlgo, FxContext, FX_READOUTS};
 use crate::wing::Params;
 use std::f32::consts::{FRAC_1_SQRT_2, TAU};
 
@@ -195,6 +196,13 @@ impl FxAlgo for Rotary {
             *l = dl + (out[0] - dl) * mix;
             *r = drr + (out[1] - drr) * mix;
         }
+    }
+
+    /// Readouts: the horn's and the drum's angle (LFO L / R) and the horn's speed in Hz (NEEDLE).
+    fn readouts(&self, out: &mut [f32; FX_READOUTS]) {
+        out[LFO_L] = self.horn.angle;
+        out[LFO_R] = self.drum.angle;
+        out[NEEDLE] = self.horn.rate;
     }
 
     fn reset(&mut self) {

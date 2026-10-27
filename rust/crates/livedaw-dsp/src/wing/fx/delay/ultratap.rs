@@ -146,7 +146,6 @@ impl FxAlgo for Ultratap {
     }
 
     fn process(&mut self, left: &mut [f32], right: &mut [f32]) {
-        self.cut.update(left.len());
         for (l, r) in left.iter_mut().zip(right.iter_mut()) {
             if self.dirty && self.fade == 0.0 {
                 self.dirty = false;

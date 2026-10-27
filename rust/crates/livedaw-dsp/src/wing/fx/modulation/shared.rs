@@ -60,8 +60,9 @@ pub(crate) fn loop_limit(x: f32) -> f32 {
 }
 
 /// Stereo LO CUT / HI CUT pair (12 dB/oct Butterworth state-variable filters).
-/// Cutoff changes glide over ~30 ms, updated once per block, so moving a
-/// control never clicks.
+/// Cutoff changes glide over ~30 ms in steps of [`CUT_STEP`] samples (the
+/// state-variable filter takes coefficient changes without transients), so
+/// moving a control never clicks.
 #[derive(Clone, Copy)]
 pub(crate) struct CutFilter {
     hp: [Svf; 2],
@@ -71,8 +72,14 @@ pub(crate) struct CutFilter {
     lc_target: f32,
     hc_target: f32,
     sr: f32,
+    /// Glide per step, and samples until the next step.
+    a: f32,
+    countdown: u32,
     primed: bool,
 }
+
+/// Samples between two coefficient updates of a gliding [`CutFilter`].
+const CUT_STEP: u32 = 16;
 
 impl CutFilter {
     pub(crate) fn new(sr: f32) -> Self {
@@ -84,6 +91,8 @@ impl CutFilter {
             lc_target: 20.0,
             hc_target: 20_000.0,
             sr,
+            a: 1.0 - (-(CUT_STEP as f32) / (0.03 * sr)).exp(),
+            countdown: 0,
             primed: false,
         };
         f.apply();
@@ -115,12 +124,9 @@ impl CutFilter {
         }
     }
 
-    /// Moves the cutoffs towards their targets; call once per block of `n` samples.
-    pub(crate) fn update(&mut self, n: usize) {
-        if self.lc == self.lc_target && self.hc == self.hc_target {
-            return;
-        }
-        let a = 1.0 - (-(n as f32) / (0.03 * self.sr)).exp();
+    /// One glide step towards the targets.
+    fn step(&mut self) {
+        let a = self.a;
         self.lc *= (self.lc_target / self.lc).powf(a);
         self.hc *= (self.hc_target / self.hc).powf(a);
         if (self.lc / self.lc_target - 1.0).abs() < 1e-3 {
@@ -132,9 +138,17 @@ impl CutFilter {
         self.apply();
     }
 
-    /// Filters one sample of channel `ch` (0 = left, 1 = right).
+    /// Filters one sample of channel `ch` (0 = left, 1 = right). Channel 0
+    /// keeps the time: call it once per sample (before channel 1).
     #[inline]
     pub(crate) fn tick(&mut self, ch: usize, x: f32) -> f32 {
+        if ch == 0 && (self.lc != self.lc_target || self.hc != self.hc_target) {
+            if self.countdown == 0 {
+                self.countdown = CUT_STEP;
+                self.step();
+            }
+            self.countdown -= 1;
+        }
         let h = self.hp[ch & 1].tick(x).hp;
         self.lp[ch & 1].tick(h).lp
     }

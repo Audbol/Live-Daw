@@ -611,13 +611,10 @@ namespace
         const char* scale[] = { "+12", "+6", "0", "-12", "-24", "-36", "-48", "-60", "-72" };
         for (int i = 0; i < 9; ++i)
             d.text (scale[i], 160, 139.0f + 23.4f * (float) i, 30, 12, 9, kPaper);
-        for (float x : { 110.0f, 138.0f, 207.0f, 235.0f })
-            for (int k = 0; k < 21; ++k)
-            {
-                const float y = 145.0f + 9.5f * (float) k;
-                const bool on = k >= (x < 180.0f ? 5 : 6);
-                d.box (x - 10, y - 3, 20, 6, Look::Fill, on ? 0xff50e040 : 0xff2a2c2a);
-            }
+        // The inputs and outputs, 0 dB on the scale at -12 dBFS (+12 is full scale).
+        const std::vector<float> scaleDb { 0, -6, -12, -24, -36, -48, -60, -72, -84 }, scaleY { 145, 168.4f, 191.8f, 215.2f, 238.6f, 262, 285.4f, 308.8f, 332.2f };
+        for (auto [x, level] : { std::pair { 110.0f, rd::InL }, { 138.0f, rd::InR }, { 207.0f, rd::OutL }, { 235.0f, rd::OutR } })
+            d.ladder (level, x, 20, 145, 335, 21, scaleDb, scaleY, 0xff50e040);
         for (float x : { 110.0f, 138.0f, 207.0f, 235.0f })
             d.text (x < 125.0f || (x > 200.0f && x < 220.0f) ? "L" : "R", x - 10, 345, 20, 14, 11, kPaper);
         // Tiles: value window, unit, caption bar.
@@ -750,8 +747,9 @@ namespace
         label (d, "OUTPUT", 285, 108, 14, grey);
         label (d, "dB", 285, 128, 12, grey);
         d.box (275, 152, 20, 210, Look::Fill, 0xff0c0c0c);
-        for (int k = 0; k < 20; ++k)
-            d.box (279, 156.0f + 10.2f * (float) k, 12, 6, Look::Fill, k >= 5 ? 0xffe02020 : 0xff3a1414);
+        // The output, 0 dB on the scale at -12 dBFS (+12 is full scale).
+        d.ladder (rd::OutL, 285, 12, 159, 352.8f, 20, { 0, -6, -12, -24, -36, -48, -60, -72, -84 },
+                  { 145, 171.5f, 198, 224.5f, 251, 277.5f, 304, 330.5f, 357 }, 0xffe02020);
         const char* scale[] = { "+12", "+6", "0", "-12", "-24", "-36", "-48", "-60", "-72" };
         for (int i = 0; i < 9; ++i)
             d.text (scale[i], 304, 138.0f + 26.5f * (float) i, 34, 14, 11, grey);
@@ -894,7 +892,7 @@ namespace
         knob ("slp", 1015, 320, 64, Look::BarKnob, 0, "SLOPE", 258);
         ends (d, 1015, 360, 26, "-24", "24", 11, ink, "dB");
         auto& g = d.add (Type::Graph, 635, 110, 440, 120);
-        g.shows (GraphKind::Taps, { p ("time"), p ("rep"), p ("slp"), p ("pdel") }, 1);
+        g.shows (GraphKind::Taps, { p ("time"), p ("rep"), p ("slp"), p ("pdel"), p ("fact") }, 1);
         return d;
     }
 
@@ -922,7 +920,7 @@ namespace
         knob ("wf", 978, "FLUTTER", "MIN", "%", "MAX");
         d.box (428, 165, 290, 195, Look::Fill, 0xff111213, 0xff2a2a2a, 2.0f);
         for (float x : { 432.0f, 578.0f })
-            d.vu (x, 168, 136, 72, Look::VuWhite, "20|10|7|5|3|0|3", { 20, 10, 7, 5, 3, 0, -3 }, "VU");
+            d.vu (x, 168, 136, 72, Look::VuWhite, "20|10|7|5|3|0|3", { 20, 10, 7, 5, 3, 0, -3 }, "VU").reads (rd::Dev + (x < 500.0f ? 0 : 1), true).vuZero = 0.75f;
         d.lamp (462, 302, 12, 0xffff2020).at (1.0f);
         for (float x : { 535.0f, 615.0f })
             d.knob (-1, x, 302, 62, Look::ChromeSmall).at (0.3f);
@@ -1073,9 +1071,13 @@ namespace
         label (d, "LO CUT", 633, 182, 13, ink).kerning (0.1f);
         ends (d, 633, 254, 26, "20", "400", 11, ink, "Hz");
         d.box (602, 268, 63, 124, Look::Fill, 0xff9a9c9e, 0xff6a6a6a, 1.5f);
-        for (int r = 0; r < 6; ++r)
-            for (float x : { 618.0f, 645.0f })
-                d.lamp (x, 282.0f + 20.0f * (float) r, 8, r < 2 ? 0xffd02020 : (r == 2 ? 0xfff0e030 : 0xff40d040)).at (r == 2 && x > 640.0f ? 1.0f : (r > 2 ? 1.0f : 0.0f));
+        // The output, left and right: red at the top, then yellow and green.
+        for (auto [x, level] : { std::pair { 618.0f, rd::OutL }, { 645.0f, rd::OutR } })
+        {
+            auto& m = d.leds (x - 8, 282, 16, 100, "", { -1, -4, -8, -14, -24, -40 }, true, 0xff40d040);
+            m.ledColours = { 0xffd02020, 0xffd02020, 0xfff0e030, 0xff40d040, 0xff40d040, 0xff40d040 };
+            m.reads (level, true);
+        }
         return d;
     }
 
@@ -1408,6 +1410,10 @@ namespace
             key.colour2 = juce::Colour (k.black ? 0xffd8d8d8 : 0xff141414);
             key.size = 16;
             key.inv(); // lit while the note is corrected to (switch off)
+            // The note heard lights its LED.
+            auto& heard = d.lamp (k.x + 42, 326, 9, 0xff40e0ff);
+            heard.reads (rd::Dev + 1); // the note heard + 1
+            heard.choice = (int) (&k - keys);
         }
         return d;
     }
@@ -1724,6 +1730,7 @@ namespace
         label (d, "ENVELOPE", 918, 98, 22, 0xffeec4a8).kerning (0.05f);
         auto& g = d.add (Type::Graph, 846, 140, 172, 100);
         g.shows (GraphKind::Decay, { p ("att"), p ("hld"), p ("rel") }, 3);
+        g.reads (rd::Dev + 2); // the envelope follower fills the shape
         for (auto [id, cx, caption, hi] : { std::tuple { "att", 840.0f, "ATTACK", "1000" }, { "hld", 932.0f, "HOLD", "2000" }, { "rel", 1020.0f, "RELEASE", "1000" } })
         {
             d.knob (p (id), cx, 330, 52, Look::BlackSkirt);
@@ -1777,7 +1784,11 @@ namespace
         scaled (d, p ("depth"), 325, 258, 68, Look::Chrome, 0, "DEPTH", 210, "MIN", "MAX", nullptr, ink, 13);
         d.box (390, 112, 98, 254, Look::Fill, 0xff2a2a2a);
         d.box (395, 117, 88, 220, Look::Fill, 0xffd8c8a0);
-        d.box (439, 117, 0, 220, Look::Line, 0x60000000, 0, 1.0f);
+        // The needle shows where the sound sits between L and R.
+        auto& needle = d.add (Type::Vu, 395, 117, 88, 220);
+        needle.look = Look::PanWindow;
+        needle.colour = juce::Colour (0xff1a1a1a);
+        needle.reads (rd::Dev + 3); // the device's NEEDLE readout
         d.text ("L  C  R", 395, 340, 88, 22, 12, 0xffeeeeee);
         lfoAndEnvelope (d, p, juce::String::fromUTF8 ("-180\xc2\xb0"), p ("wave"));
         return d;
@@ -1924,7 +1935,7 @@ namespace
         const juce::uint32 ink = 0xfff2f4f8;
         label (d, "SUB Monster", 915, 138, 36, 0xffe8eaee, Look::Script);
         label (d, "MIDAS", 955, 180, 22, 0xff1a1a1a).kerning (0.15f);
-        const auto readout = [&] (int param, float cx, float y)
+        const auto readout = [&] (int param, float cx, float y) -> Element&
         {
             d.box (cx - 34, y, 68, 22, Look::Fill, 0xfff0f0f0, 0xff8a8a8a, 1.0f);
             auto& v = d.add (Type::Value, cx - 34, y, 68, 22);
@@ -1933,6 +1944,7 @@ namespace
             v.size = 13;
             v.colour = juce::Colour (0xff1a1a1a);
             v.colour2 = juce::Colour (0x00000000);
+            return v;
         };
         for (int b = 0; b < 5; ++b)
         {

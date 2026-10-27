@@ -884,6 +884,21 @@ namespace
         return juce::jlimit (0.0f, 1.0f, (v - 0.1f) / 0.9f * zero);
     }
 
+    /** TREMOLO/PANNER's window: a needle from the foot swinging between L
+        (-1) and R (1). */
+    void drawPanWindow (juce::Graphics& g, const Element& e, float pos)
+    {
+        const Rectangle<float> f (e.x, e.y, e.w, e.h);
+        const Point<float> pivot (f.getCentreX(), f.getBottom() - 6.0f);
+        const float len = f.getHeight() - 16.0f;
+        const float a = juce::jlimit (-1.0f, 1.0f, pos) * std::atan2 (f.getWidth() * 0.42f, len);
+        g.setColour (Colour (0xff1a1a1a).withAlpha (0.35f));
+        g.drawLine ({ pivot, polar (pivot, len, 0.0f) }, 1.0f);
+        g.setColour (e.colour);
+        g.drawLine ({ pivot, polar (pivot, len, a) }, 2.2f);
+        g.fillEllipse (circle (pivot, 4.0f));
+    }
+
     void drawVu (juce::Graphics& g, const Element& e, float reduction)
     {
         const Rectangle<float> f (e.x, e.y, e.w, e.h);
@@ -1035,8 +1050,9 @@ namespace
             const Point<float> c = e.vertical ? Point<float> (e.x + e.w * 0.5f, e.y + e.h * t) : Point<float> (e.x + e.w * t, e.y + e.h * 0.5f);
             const float mark = e.marks[(size_t) i];
             const bool lit = e.level ? value >= mark : (value >= mark && mark > 0.0f);
+            const Colour colour = i < (int) e.ledColours.size() ? Colour (e.ledColours[(size_t) i]) : e.colour;
             if (e.dots)
-                drawLed (g, c, d * 0.5f, e.colour, lit);
+                drawLed (g, c, d * 0.5f, colour, lit);
             else
             {
                 // Bar LEDs (a column of slots).
@@ -1044,11 +1060,11 @@ namespace
                 const auto bar = Rectangle<float> (bw, bh).withCentre (c);
                 g.setColour (Colour (0xff050505));
                 g.fillRect (bar.expanded (1.5f));
-                g.setColour (lit ? e.colour : e.colour.withMultipliedBrightness (0.22f).withMultipliedSaturation (0.6f));
+                g.setColour (lit ? colour : colour.withMultipliedBrightness (0.22f).withMultipliedSaturation (0.6f));
                 g.fillRect (bar);
                 if (lit)
                 {
-                    g.setColour (e.colour.withAlpha (0.25f));
+                    g.setColour (colour.withAlpha (0.25f));
                     g.fillRect (bar.expanded (3.0f));
                 }
             }
@@ -1225,7 +1241,9 @@ namespace
         }
         g.setColour (e.colour2);
         g.fillRect (r);
-        auto text = consoleText (p, v);
+        // A value derived from the parameter (`factor`: SUB MONSTER's band frequencies from
+        // TUNE) can lie outside its range: printed as it is, not clamped to the range.
+        auto text = e.factor != 1.0f ? juce::String (v, 1) + (p.unit.isNotEmpty() ? " " + p.unit : juce::String()) : consoleText (p, v);
         if (e.look == Look::Segment)
         {
             const auto [number, unit] = segmentText (text);
@@ -1609,8 +1627,8 @@ namespace
         const float full = in.e.range > 20.0f ? in.e.range : 1000.0f;
         if (variant == 1)
         {
-            // A row of taps over TIME after the pre-delay, levels along the slope.
-            const float time = juce::jmax (1.0f, in.ms (0, full));
+            // A row of taps over TIME (x FACTOR) after the pre-delay, levels along the slope.
+            const float time = juce::jmax (1.0f, in.ms (0, full) * (in.has (4) ? in.number (4, 1.0f) : 1.0f));
             const int n = juce::jlimit (1, 32, juce::roundToInt (in.value (1, 1.0f)));
             const float slope = in.value (2), pre = in.ms (3, 500.0f);
             for (int k = 1; k <= n; ++k)
@@ -1690,6 +1708,18 @@ namespace
         auto fill = env;
         fill.closeSubPath();
         g.fillPath (fill);
+        if (in.e.meter >= 0 && in.ctx.readout)
+        {
+            // The envelope follower now (readout 0..1): the shape filled up to its level.
+            const float level = juce::jlimit (0.0f, 1.0f, in.ctx.readout (in.e.meter));
+            g.saveState();
+            g.reduceClipRegion (fill);
+            g.setColour (green.withAlpha (0.55f));
+            g.fillRect (body.withTop (body.getBottom() - body.getHeight() * level));
+            g.restoreState();
+            g.setColour (juce::Colours::white.withAlpha (0.8f));
+            g.drawHorizontalLine (juce::roundToInt (body.getBottom() - body.getHeight() * level), body.getX(), body.getRight());
+        }
         g.setColour (green);
         g.strokePath (env, juce::PathStrokeType (3.0f));
     }
@@ -1810,6 +1840,16 @@ namespace
             }
             g.setColour (lane == 0 ? kCurve : kCurve2);
             g.strokePath (p, juce::PathStrokeType (lane == 0 ? 3.0f : 2.0f));
+            if (in.e.meter >= 0 && in.ctx.readout)
+            {
+                // Where the LFO is now (readouts: its position 0..1, left then right), in the
+                // first of the two cycles drawn; the lane draws phase 2t (+ the offset) at t.
+                const float ph = in.ctx.readout (in.e.meter + lane);
+                const float u = ph - (lane == 1 ? phaseOffset : 0.0f);
+                const float x = body.getX() + body.getWidth() * 0.5f * (u - std::floor (u));
+                const float y = body.getCentreY() - lfoShape (ph, choice, skew) * depth * body.getHeight() * 0.45f;
+                g.fillEllipse (circle ({ x, y }, lane == 0 ? 6.0f : 5.0f));
+            }
         }
         label (g, "L", { body.getRight() - 40.0f, body.getY(), 16.0f, 14.0f }, juce::Justification::centred, kCurve);
         label (g, "R", { body.getRight() - 22.0f, body.getY(), 16.0f, 14.0f }, juce::Justification::centred, kCurve2);
@@ -2325,10 +2365,17 @@ void paintDesign (juce::Graphics& g, const Design& d, const PaintContext& ctx)
                 break;
             case Type::Lamp:
                 drawLed (g, { e.x, e.y }, e.w * 0.5f, e.colour,
-                         e.meter >= 0 ? meterValue (e, ctx) >= e.range : (p != nullptr ? elementOn (e, *p, v) : e.fixed > 0.5f));
+                         e.meter >= 0 ? (e.choice >= 0 && ! e.level ? ctx.readout && juce::roundToInt (ctx.readout (e.meter)) == e.choice + 1
+                                                                    : meterValue (e, ctx) >= e.range)
+                                      : (p != nullptr ? elementOn (e, *p, v) : e.fixed > 0.5f));
                 break;
             case Type::Fader: drawFader (g, e, p != nullptr ? controlPosition (*p, v) : e.fixed); break;
-            case Type::Vu: drawVu (g, e, e.level ? -meterValue (e, ctx) : meterValue (e, ctx)); break;
+            case Type::Vu:
+                if (e.look == Look::PanWindow)
+                    drawPanWindow (g, e, e.meter >= 0 && ctx.readout ? ctx.readout (e.meter) : 0.0f);
+                else
+                    drawVu (g, e, e.level ? -meterValue (e, ctx) : meterValue (e, ctx));
+                break;
             case Type::Leds: drawLeds (g, e, meterValue (e, ctx)); break;
             case Type::Bar: drawBar (g, e, meterValue (e, ctx)); break;
             case Type::Text: drawText (g, e); break;

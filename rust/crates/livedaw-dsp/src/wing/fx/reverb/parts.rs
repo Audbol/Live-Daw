@@ -806,20 +806,28 @@ impl<const N: usize> BuildUp<N> {
     pub fn tick(&mut self, xl: f32, xr: f32) -> ([f32; N], (f32, f32)) {
         self.lines.push(&[xl, xr]);
         let mut v = [0.0f32; N];
+        // The other side's line read at each tap's time: what reaches the
+        // opposite output (a source on one side still reflects off both).
+        let mut x = [0.0f32; N];
         if self.frac {
             for i in 0..N {
                 self.pos[i] += self.inc[i];
                 v[i] = self.gain[i] * self.lines.hermite(i & 1, self.pos[i]);
+                x[i] = self.gain[i] * self.lines.hermite((i & 1) ^ 1, self.pos[i]);
             }
         } else {
             for i in 0..N {
                 v[i] = self.gain[i] * self.lines.tap(i & 1, self.ipos[i]);
+                x[i] = self.gain[i] * self.lines.tap((i & 1) ^ 1, self.ipos[i]);
             }
         }
+        // Left: the left line at the even taps' times plus the right line at
+        // the same times; right: the right line at the odd taps' times plus
+        // the left one there. The sides stay decorrelated.
         let (mut el, mut er) = (0.0, 0.0);
-        for pair in v.chunks_exact(2) {
-            el += pair[0];
-            er += pair[1];
+        for (pair, cross) in v.chunks_exact(2).zip(x.chunks_exact(2)) {
+            el += 0.85 * pair[0] + 0.5 * cross[0];
+            er += 0.85 * pair[1] + 0.5 * cross[1];
         }
         let n = 1.0 / ((N / 2) as f32).sqrt();
         (v, (el * n, er * n))
@@ -1100,6 +1108,9 @@ impl Output {
         let s = 0.5 * (l - r) * self.width.cur;
         let b = self.bal.cur;
         let g = self.gain.cur;
-        ((m + s) * g * (1.0 - b).min(1.0), (m - s) * g * (1.0 + b).min(1.0))
+        // The lo cut's answer to the tanks' anti-denormal offset dies away
+        // through the denormal range: end it at silence.
+        let flush = |y: f32| if y.abs() < 1e-20 { 0.0 } else { y };
+        (flush((m + s) * g * (1.0 - b).min(1.0)), flush((m - s) * g * (1.0 + b).min(1.0)))
     }
 }

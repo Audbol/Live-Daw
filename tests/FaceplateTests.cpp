@@ -311,11 +311,83 @@ public:
             expectEquals (face.pageFromParameter(), 1);
         }
 
-        beginTest ("The dynamics, EQ and utility devices' meters show the live readouts, and repainting only them paints what a full repaint does");
+        beginTest ("The reverbs', delays', modulation's and pitch devices' meters show the slot's live values");
+        {
+            using namespace ui::fp;
+            // Every meter on these panels is fed by the slot (none waits for a gain
+            // reduction these devices don't have), and each moves when its value does.
+            const char* const tokens[] = { "HALL",   "ROOM",   "CHAMBER", "PLATE", "CONCERT", "AMBI",   "V-ROOM",  "V-REV",   "V-PLATE", "GATED",
+                                           "REVERSE", "DEL/REV", "SHIMMER", "SPRING", "VSS3",  "BPLATE", "DIMCRS",  "CHORUS",  "FLANGER", "PHASER",
+                                           "PANNER", "ROTARY", "MOOD",    "ST-DL", "TAP-DL",  "TAPE-DL", "OILCAN", "BBD-DL", "PITCH",   "D-PITCH",
+                                           "DOUBLE", "PCORR",  "SUB",     "SUB-M", "P-BASS",  "RACKAMP", "UKROCK", "ANGEL",  "JAZZC",   "DELUXE" };
+            const juce::StringArray metered { "V-ROOM", "DIMCRS", "TAPE-DL", "V-PLATE", "ST-DL", "D-PITCH", "P-BASS", "PANNER", "PHASER", "SUB-M", "PCORR" };
+            for (auto* token : tokens)
+            {
+                const int index = models::findModel (models::Fx, token);
+                const auto& m = models::model (models::Fx, index);
+                const auto* d = findDesign (models::Fx, token);
+                expect (d != nullptr, token);
+                if (d == nullptr)
+                    continue;
+                int live = 0;
+                for (const auto& e : d->elements)
+                {
+                    if (e.type == Type::Vu || e.type == Type::Leds || e.type == Type::Bar)
+                        expect (e.meter >= 0, juce::String (token) + ": a meter waiting for a gain reduction");
+                    if (! isLive (e))
+                        continue;
+                    ++live;
+                    // Drawn at rest and with a loud, moving signal, its area differs.
+                    const auto area = paintArea (e).getSmallestIntegerContainer().getIntersection ({ 0, 0, (int) kFrameW, (int) kFrameH });
+                    auto render = [&] (bool loud)
+                    {
+                        juce::Image image (juce::Image::RGB, (int) kFrameW, (int) kFrameH, true);
+                        juce::Graphics g (image);
+                        PaintContext ctx;
+                        ctx.spec = &m;
+                        ctx.value = [&m] (int i) { return m.params[(size_t) i].defaultValue; };
+                        ctx.page = juce::jmax (0, e.page);
+                        // Levels at -3 dBFS, the device's values (LFO, envelope, needle) at 0.6,
+                        // a note lamp's own note heard (readout: note + 1).
+                        const float note = (float) (e.choice + 1);
+                        const bool noteLamp = e.type == Type::Lamp && e.choice >= 0;
+                        ctx.levelDb = [loud] (int) { return loud ? -3.0f : -150.0f; };
+                        ctx.readout = [loud, note, noteLamp] (int) { return ! loud ? 0.0f : (noteLamp ? note : 0.6f); };
+                        paintDesign (g, *d, ctx);
+                        return image.getClippedImage (area).createCopy();
+                    };
+                    const auto quiet = render (false), loud = render (true);
+                    int differ = 0;
+                    for (int y = 0; y < quiet.getHeight(); ++y)
+                        for (int x = 0; x < quiet.getWidth(); ++x)
+                            differ += quiet.getPixelAt (x, y) != loud.getPixelAt (x, y) ? 1 : 0;
+                    expect (differ > 10, juce::String (token) + ": a live element doesn't move (" + juce::String (differ) + " pixels)");
+                }
+                expect ((live > 0) == metered.contains (token), juce::String (token) + ": " + juce::String (live) + " live elements");
+                if (snapshots.isNotEmpty() && live > 0)
+                {
+                    // For review: the panel with a loud signal (-3 dBFS, A heard, needle right).
+                    juce::Image image (juce::Image::RGB, (int) kFrameW, (int) kFrameH, true);
+                    juce::Graphics g (image);
+                    PaintContext ctx;
+                    ctx.spec = &m;
+                    ctx.value = [&m] (int i) { return m.params[(size_t) i].defaultValue; };
+                    ctx.levelDb = [] (int i) { return i == rd::InR || i == rd::OutR || i == rd::Dev + 1 ? -9.0f : -3.0f; };
+                    ctx.readout = [] (int i) { return i == rd::Dev + 1 ? 10.0f : 0.4f; };
+                    paintDesign (g, *d, ctx);
+                    auto file = juce::File (snapshots).getChildFile ("live_" + m.token.retainCharacters ("ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789") + ".png");
+                    file.deleteFile();
+                    juce::FileOutputStream out (file);
+                    juce::PNGImageFormat().writeImageToStream (image, out);
+                }
+            }
+        }
+
+        beginTest ("The FX devices' meters show the live readouts, and repainting only them paints what a full repaint does");
         {
             namespace fp = ui::fp;
             for (const char* token : { "C5-CMB", "LIMITER", "DE-S2", "ENHANCE", "P-BASS", "TAPE", "SUB-M", "V-IMG", "SPKMAN", "*EVEN*", "*SOUL*",
-                                       "*VINTAGE*", "*BUS*", "*MASTER*" })
+                                       "*VINTAGE*", "*BUS*", "*MASTER*", "V-ROOM", "DIMCRS", "TAPE-DL", "V-PLATE", "ST-DL", "D-PITCH", "PANNER" })
             {
                 const auto& spec = models::model (models::Fx, models::findModel (models::Fx, token));
                 const auto* design = fp::findDesign (models::Fx, token);

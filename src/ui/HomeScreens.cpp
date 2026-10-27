@@ -3043,7 +3043,8 @@ public:
             {
                 face->bind (
                     models::Fx, model, fx.params (slot).values, [&fx, slot] { return fx.getMeter (slot); },
-                    [&fx, slot] (int band) { return fx.getBandGain (slot, band); });
+                    [&fx, slot] (int band) { return fx.getBandGain (slot, band); },
+                    [&fx, slot] (float* out, int n) { return fx.getReadouts (slot, out, n); });
                 face->onTouched = [this] (int param)
                 {
                     if (param / 6 != knobPage)

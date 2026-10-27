@@ -3,7 +3,8 @@
 
 use super::shared::{advance, loop_limit, ms, sine_tri, CutFilter};
 use crate::wing::fx::blocks::{shape, DelayLine, Smoothed, Svf, Wave};
-use crate::wing::fx::{FxAlgo, FxContext};
+use crate::wing::fx::readout::{LFO_L, LFO_R};
+use crate::wing::fx::{FxAlgo, FxContext, FX_READOUTS};
 use crate::wing::Params;
 
 /// Triangle with rounded turning points (no sudden pitch flip at the ends).
@@ -131,6 +132,12 @@ impl FxAlgo for Dimension {
         }
     }
 
+    fn readouts(&self, out: &mut [f32; FX_READOUTS]) {
+        out[LFO_L] = self.phase;
+        // The second line sweeps the other way.
+        out[LFO_R] = (self.phase + 0.5).rem_euclid(1.0);
+    }
+
     fn reset(&mut self) {
         for l in &mut self.lines {
             l.clear();
@@ -228,7 +235,6 @@ impl FxAlgo for Chorus {
     }
 
     fn process(&mut self, left: &mut [f32], right: &mut [f32]) {
-        self.cut.update(left.len());
         for (l, r) in left.iter_mut().zip(right.iter_mut()) {
             let (dl, dr) = (*l, *r);
             self.lines[0].push(dl);
@@ -249,6 +255,11 @@ impl FxAlgo for Chorus {
             *l = dl + (wl - dl) * mix;
             *r = dr + (wr - dr) * mix;
         }
+    }
+
+    fn readouts(&self, out: &mut [f32; FX_READOUTS]) {
+        out[LFO_L] = self.phase;
+        out[LFO_R] = (self.phase + self.offset.value).rem_euclid(1.0);
     }
 
     fn reset(&mut self) {
@@ -343,9 +354,6 @@ impl FxAlgo for Flanger {
     }
 
     fn process(&mut self, left: &mut [f32], right: &mut [f32]) {
-        let n = left.len();
-        self.cut.update(n);
-        self.fcut.update(n);
         for (l, r) in left.iter_mut().zip(right.iter_mut()) {
             advance(&mut self.phase, self.inc);
             let off = self.offset.tick();
@@ -361,6 +369,11 @@ impl FxAlgo for Flanger {
                 *x += (wet - *x) * mix;
             }
         }
+    }
+
+    fn readouts(&self, out: &mut [f32; FX_READOUTS]) {
+        out[LFO_L] = self.phase;
+        out[LFO_R] = (self.phase + self.offset.value).rem_euclid(1.0);
     }
 
     fn reset(&mut self) {

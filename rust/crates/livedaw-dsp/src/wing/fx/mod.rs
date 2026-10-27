@@ -24,6 +24,8 @@ mod eqfx;
 mod modulation;
 mod pitch;
 mod reverb;
+#[cfg(test)]
+mod time_audit;
 mod utility;
 
 use super::{ModelCategory, ModelSpec, Params, FX_MODELS, MAX_FX_PARAMS};
@@ -78,6 +80,18 @@ pub trait FxAlgo: Send {
     fn latency(&self) -> u32 {
         0
     }
+}
+
+/// The readout layout of the modulation devices (CHORUS, FLANGER, DIMCRS,
+/// PHASER, TREMOLO/PANNER, MOOD, ROTARY): the LFO's position in its cycle
+/// (0..1) for the left / first voice and the right / second one, the
+/// envelope follower (0..1) and the unit's needle (TREMOLO/PANNER's L-C-R
+/// position -1..1, ROTARY's horn speed in Hz).
+pub mod readout {
+    pub const LFO_L: usize = 0;
+    pub const LFO_R: usize = 1;
+    pub const ENVELOPE: usize = 2;
+    pub const NEEDLE: usize = 3;
 }
 
 /// Bands [`FxAlgo::band_gain`] can report (TRIPLE DEQ has the most).
@@ -231,6 +245,7 @@ impl FxDevice {
             self.algo.set_params(&Params::new(spec, &self.values));
             self.primed = true;
         }
+        let _ftz = crate::denormals::ScopedNoDenormals::new();
         let len = left.len().min(right.len());
         let mut start = 0;
         while start < len {

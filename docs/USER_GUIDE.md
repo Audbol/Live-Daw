@@ -314,8 +314,9 @@ like the finish. The COMPACT is black, so it always shows the black finish. It f
   METER SOURCE of SETUP > SURFACE (or a right-click on it): MAIN 1-4, MTX 1-8, PHONES,
   SPEAKERS or SEL CH (the selected strip). The blank key taps the tempo of a delay
   open on EFFECTS or on an INS 1 / INS 2 screen: the time between two taps becomes its
-  TIME. Its LED blinks at that tempo while it can tap, and is lit where the screen
-  gives it another function.
+  TIME (OILCAN's TIME and BBD's DELAY dials turn to that delay time). Its LED blinks
+  at that tempo while it can tap, and is lit where the screen gives it another
+  function.
   - **Surface lock:** hold **HOME** to lock the surface and the touchscreen; the audio
     and the remotes go on. Hold other keys beside the display together with HOME (or
     right-click them just before) and they become the password: only HOME with the
@@ -386,7 +387,12 @@ like the finish. The COMPACT is black, so it always shows the black finish. It f
     scope, the speaker manager's live DYN EQ curve, each channel-strip section's own
     reduction, the EXTERNAL EFFECT's SEND and RETURN; levels move like every other
     meter (see *How the meters move*). The PRECISION LIMITER's 1 ms look-ahead is
-    compensated (delay compensation and FX MIX). The
+    compensated (delay compensation and FX MIX). On the reverbs, delays, modulation
+    and pitch devices: VINTAGE ROOM's INPUTS / OUTPUTS, DIMENSION CRS's OUTPUT, TAPE
+    DELAY's record-level VUs (0 VU = -18 dBFS), VINTAGE PLATE's VU, STEREO DELAY's
+    tube, DUAL PITCH's output LEDs, TREMOLO/PANNER's L-C-R needle, the envelope of
+    PHASER and TREMOLO/PANNER filling their envelope graph, and PITCH FIX's LED over
+    the note it hears. The
     device list shows a tile per device: NONE and EXTERNAL (a plugin or an outboard
     insert, see *Outboard inserts*) first, then the
     tabs **FX1-8** (the premium devices, slots 1-8 only), **STD** and **CH** (the EQs and

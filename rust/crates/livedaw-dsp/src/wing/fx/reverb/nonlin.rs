@@ -35,7 +35,12 @@ pub(super) struct NonLin {
     sgn: [[f32; TAPS]; 2],
     pos: [[Pos; TAPS]; 2],
     gain: [[f32; TAPS]; 2],
+    /// Where the gains glide to over this control block, and their steps.
+    gain_to: [[f32; TAPS]; 2],
+    ginc: [[f32; TAPS]; 2],
     active: usize,
+    /// Taps read this block (the larger of the old and new count while gliding).
+    reading: usize,
     pre: Param,
     win: Param,
     dens: Param,
@@ -80,7 +85,10 @@ impl NonLin {
             sgn,
             pos: [[Pos::default(); TAPS]; 2],
             gain: [[0.0; TAPS]; 2],
+            gain_to: [[0.0; TAPS]; 2],
+            ginc: [[0.0; TAPS]; 2],
             active: TAPS,
+            reading: TAPS,
             pre: Param::default(),
             win: Param::default(),
             dens: Param::default(),
@@ -115,8 +123,11 @@ impl NonLin {
         }
     }
 
-    fn update_taps(&mut self, moving: bool) {
+    /// New tap times (when `moving`) and gains; the gains glide there over
+    /// the next control block (`snap`: at once).
+    fn update_taps(&mut self, moving: bool, snap: bool) {
         let frac = self.pre.moving() || self.win.moving();
+        let before = self.active;
         let max = self.lines[0].max_delay() as f32 - 3.0;
         // DENSITY: the active fraction of the taps; the last one fades in.
         let n = (self.dens.cur * TAPS as f32).clamp(1.0, TAPS as f32);
@@ -129,16 +140,26 @@ impl NonLin {
                 }
             }
             let mut sum = 0.0;
-            for k in 0..self.active {
-                let u = self.u[c][k];
-                let w = (n - k as f32).min(1.0);
-                let g = self.envelope(u, shape, unfold) * w;
-                self.gain[c][k] = g * self.sgn[c][k];
+            for k in 0..TAPS {
+                let g = if k < self.active { self.envelope(self.u[c][k], shape, unfold) * (n - k as f32).min(1.0) } else { 0.0 };
+                self.gain_to[c][k] = g * self.sgn[c][k];
                 sum += g * g;
             }
             let norm = 0.8 / sum.sqrt().max(1e-3);
-            for g in &mut self.gain[c][..self.active] {
+            for g in &mut self.gain_to[c][..self.active] {
                 *g *= norm;
+            }
+        }
+        self.reading = self.active.max(before);
+        if snap {
+            self.gain = self.gain_to;
+            self.ginc = [[0.0; TAPS]; 2];
+        } else {
+            let k = 1.0 / CTL as f32;
+            for c in 0..2 {
+                for i in 0..TAPS {
+                    self.ginc[c][i] = (self.gain_to[c][i] - self.gain[c][i]) * k;
+                }
             }
         }
     }
@@ -203,13 +224,17 @@ impl Voice for NonLin {
 
     fn control(&mut self) {
         let force = std::mem::take(&mut self.force);
+        // The last block's gain glide has arrived.
+        self.gain = self.gain_to;
+        self.ginc = [[0.0; TAPS]; 2];
+        self.reading = self.active;
         let a = self.a;
         // Tap times glide at most ~0.8 sample per sample (a bend, not a smear).
         let lim = 0.4 * CTL as f32;
         let moved = self.pre.step_limited(self.a_slow, lim) | self.win.step_limited(self.a_slow, lim);
         let shaped = self.dens.step(a) | self.shape.step(a) | self.unfold.step(a);
         if moved || shaped || force {
-            self.update_taps(moved || force);
+            self.update_taps(moved || force, force);
         }
         if self.diffusion.step(a) || force {
             for d in &mut self.diff {
@@ -229,13 +254,14 @@ impl Voice for NonLin {
     #[inline]
     fn tick(&mut self, xl: f32, xr: f32) -> (f32, f32) {
         let mut out = [0.0f32; 2];
-        let n = self.active;
+        let n = self.reading;
         for (c, x) in [xl, xr].into_iter().enumerate() {
             let line = &mut self.lines[c];
             line.push(self.diff[c].tick(x));
             let mut s = 0.0;
-            for (p, &g) in self.pos[c][..n].iter_mut().zip(&self.gain[c][..n]) {
-                s += g * p.read(line);
+            for ((p, g), &inc) in self.pos[c][..n].iter_mut().zip(&mut self.gain[c][..n]).zip(&self.ginc[c][..n]) {
+                s += *g * p.read(line);
+                *g += inc;
             }
             let s = self.post[c].tick(s);
             // HI FREQ / HI GAIN: first-order high shelf.

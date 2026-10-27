@@ -10,7 +10,8 @@ mod shifter;
 mod sub;
 mod yin;
 
-use super::blocks::{coef, db_to_gain, equal_power, Biquad, BiquadCoeffs, Noise, Smoothed};
+use super::blocks::{coef, db_to_gain, equal_power, Biquad, Noise, Smoothed};
+use super::modulation::shared::{CutFilter, Glide};
 use super::{FxAlgo, FxContext};
 use crate::wing::Params;
 use shifter::{Shifter, ShifterSpec};
@@ -81,6 +82,10 @@ impl<T: FxAlgo> FxAlgo for Primed<T> {
 /// Parameter smoothing time (ms).
 const SMOOTH_MS: f32 = 20.0;
 
+/// How fast a DELAY change moves the read point (samples per sample): the
+/// shifted signal bends by at most this much instead of smearing.
+const DELAY_SLEW: f32 = 0.25;
+
 /// Longest DELAY of the pitch devices (ms).
 const MAX_DELAY_MS: f32 = 500.0;
 
@@ -131,75 +136,6 @@ fn pan_gains(pan: f32) -> (f32, f32) {
     (a.cos(), a.sin())
 }
 
-/// LO CUT / HI CUT (12 dB/oct each) with cutoffs that glide per block.
-struct CutFilters {
-    sr: f32,
-    hp: Biquad,
-    lp: Biquad,
-    lc: f32,
-    hc: f32,
-    lc_target: f32,
-    hc_target: f32,
-}
-
-impl CutFilters {
-    fn new(sr: f32) -> Self {
-        let mut f = Self {
-            sr,
-            hp: Biquad::default(),
-            lp: Biquad::default(),
-            lc: 80.0,
-            hc: 12_000.0,
-            lc_target: 80.0,
-            hc_target: 12_000.0,
-        };
-        f.design();
-        f
-    }
-
-    fn set(&mut self, lc: f32, hc: f32) {
-        self.lc_target = lc.clamp(10.0, 1000.0);
-        self.hc_target = hc.clamp(100.0, 22_000.0);
-    }
-
-    fn design(&mut self) {
-        let sr = self.sr as f64;
-        self.hp.set_coefficients(BiquadCoeffs::high_pass(sr, self.lc as f64, std::f64::consts::FRAC_1_SQRT_2));
-        self.lp.set_coefficients(BiquadCoeffs::low_pass(sr, (self.hc as f64).min(sr * 0.45), std::f64::consts::FRAC_1_SQRT_2));
-    }
-
-    /// Moves the cutoffs towards their targets (once per block).
-    fn update(&mut self) {
-        if self.lc == self.lc_target && self.hc == self.hc_target {
-            return;
-        }
-        let glide = |v: f32, t: f32| {
-            let r = t / v;
-            if (r - 1.0).abs() < 0.005 {
-                t
-            } else {
-                v * r.powf(0.35)
-            }
-        };
-        self.lc = glide(self.lc, self.lc_target);
-        self.hc = glide(self.hc, self.hc_target);
-        self.design();
-    }
-
-    fn snap(&mut self) {
-        self.lc = self.lc_target;
-        self.hc = self.hc_target;
-        self.design();
-        self.hp.reset();
-        self.lp.reset();
-    }
-
-    #[inline]
-    fn tick(&mut self, x: f32, ch: usize) -> f32 {
-        self.lp.tick(self.hp.tick(x, ch), ch)
-    }
-}
-
 // ---- PITCH: Stereo Pitch --------------------------------------------------------------
 
 /// Lexicon PCM70 style stereo pitch shifter: SEMITONES and CENT set the
@@ -209,9 +145,9 @@ impl CutFilters {
 struct StereoPitch {
     sr: f32,
     shifter: Shifter,
-    cuts: CutFilters,
+    cuts: CutFilter,
     ratio: Smoothed,
-    delay: Smoothed,
+    delay: Glide,
     dry: Smoothed,
     wet: Smoothed,
 }
@@ -222,9 +158,9 @@ impl StereoPitch {
         Self {
             sr,
             shifter: Shifter::new(PITCH_SHIFTER, sr, true),
-            cuts: CutFilters::new(sr),
+            cuts: CutFilter::new(sr),
             ratio: Smoothed::new(1.0, SMOOTH_MS, sr),
-            delay: Smoothed::new(0.0, 80.0, sr),
+            delay: Glide::new(80.0, DELAY_SLEW, sr),
             dry: Smoothed::new(0.0, SMOOTH_MS, sr),
             wet: Smoothed::new(1.0, SMOOTH_MS, sr),
         }
@@ -242,9 +178,8 @@ impl FxAlgo for StereoPitch {
     }
 
     fn process(&mut self, left: &mut [f32], right: &mut [f32]) {
-        self.cuts.update();
         for (l, r) in left.iter_mut().zip(right.iter_mut()) {
-            let (xl, xr) = (self.cuts.tick(*l, 0), self.cuts.tick(*r, 1));
+            let (xl, xr) = (self.cuts.tick(0, *l), self.cuts.tick(1, *r));
             let (yl, yr) = self.shifter.tick_stereo(xl, xr, self.ratio.tick(), self.delay.tick());
             let (dry, wet) = (self.dry.tick(), self.wet.tick());
             *l = *l * dry + yl * wet;
@@ -254,10 +189,11 @@ impl FxAlgo for StereoPitch {
 
     fn reset(&mut self) {
         self.shifter.clear();
-        self.cuts.snap();
-        for s in [&mut self.ratio, &mut self.delay, &mut self.dry, &mut self.wet] {
+        self.cuts.reset();
+        for s in [&mut self.ratio, &mut self.dry, &mut self.wet] {
             s.snap(s.target);
         }
+        self.delay.snap();
     }
 }
 
@@ -267,7 +203,7 @@ impl FxAlgo for StereoPitch {
 struct PitchVoice {
     shifter: Shifter,
     ratio: Smoothed,
-    delay: Smoothed,
+    delay: Glide,
     gl: Smoothed,
     gr: Smoothed,
 }
@@ -277,7 +213,7 @@ struct PitchVoice {
 /// output is the two voices only (the FX slot mixes in the dry signal).
 struct DualPitch {
     sr: f32,
-    cuts: CutFilters,
+    cuts: CutFilter,
     voices: [PitchVoice; 2],
 }
 
@@ -287,11 +223,11 @@ impl DualPitch {
         let voice = || PitchVoice {
             shifter: Shifter::new(PITCH_SHIFTER, sr, false),
             ratio: Smoothed::new(1.0, SMOOTH_MS, sr),
-            delay: Smoothed::new(0.0, 80.0, sr),
+            delay: Glide::new(80.0, DELAY_SLEW, sr),
             gl: Smoothed::new(0.0, SMOOTH_MS, sr),
             gr: Smoothed::new(0.0, SMOOTH_MS, sr),
         };
-        Self { sr, cuts: CutFilters::new(sr), voices: [voice(), voice()] }
+        Self { sr, cuts: CutFilter::new(sr), voices: [voice(), voice()] }
     }
 }
 
@@ -310,9 +246,8 @@ impl FxAlgo for DualPitch {
     }
 
     fn process(&mut self, left: &mut [f32], right: &mut [f32]) {
-        self.cuts.update();
         for (l, r) in left.iter_mut().zip(right.iter_mut()) {
-            let x = self.cuts.tick(0.5 * (*l + *r), 0);
+            let x = self.cuts.tick(0, 0.5 * (*l + *r));
             let (mut ol, mut or) = (0.0, 0.0);
             for v in &mut self.voices {
                 let y = v.shifter.tick_mono(x, v.ratio.tick(), v.delay.tick());
@@ -325,12 +260,13 @@ impl FxAlgo for DualPitch {
     }
 
     fn reset(&mut self) {
-        self.cuts.snap();
+        self.cuts.reset();
         for v in &mut self.voices {
             v.shifter.clear();
-            for s in [&mut v.ratio, &mut v.delay, &mut v.gl, &mut v.gr] {
+            for s in [&mut v.ratio, &mut v.gl, &mut v.gr] {
                 s.snap(s.target);
             }
+            v.delay.snap();
         }
     }
 }
@@ -726,6 +662,13 @@ impl FxAlgo for PitchFix {
             *l = yl;
             *r = yr;
         }
+    }
+
+    /// Readouts: 0 the correction in cents, 1 the note heard plus one (1 = C
+    /// .. 12 = B; 0 none).
+    fn readouts(&self, out: &mut [f32; super::FX_READOUTS]) {
+        out[0] = 100.0 * self.shift;
+        out[1] = self.note.map_or(0.0, |n| (n.rem_euclid(12) + 1) as f32);
     }
 
     fn reset(&mut self) {

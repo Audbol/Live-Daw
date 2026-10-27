@@ -2,7 +2,8 @@
 
 use super::shared::{advance, tri_sine_square};
 use crate::wing::fx::blocks::{coef, Envelope, Smoothed};
-use crate::wing::fx::{FxAlgo, FxContext};
+use crate::wing::fx::readout::{ENVELOPE, LFO_L, LFO_R, NEEDLE};
+use crate::wing::fx::{FxAlgo, FxContext, FX_READOUTS};
 use crate::wing::Params;
 use std::f32::consts::FRAC_PI_4;
 
@@ -104,6 +105,15 @@ impl FxAlgo for Panner {
             *l *= self.gain[0];
             *r *= self.gain[1];
         }
+    }
+
+    fn readouts(&self, out: &mut [f32; FX_READOUTS]) {
+        out[LFO_L] = self.phase;
+        out[LFO_R] = (self.phase + self.offset.value).rem_euclid(1.0);
+        out[ENVELOPE] = (2.5 * self.env.env).clamp(0.0, 1.0);
+        // Where the sound sits between the speakers: -1 left .. 1 right.
+        let [l, r] = self.gain;
+        out[NEEDLE] = ((r - l) / (l + r).max(1e-6)).clamp(-1.0, 1.0);
     }
 
     fn reset(&mut self) {

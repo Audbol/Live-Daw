@@ -99,9 +99,6 @@ impl FxAlgo for StereoDelay {
     }
 
     fn process(&mut self, left: &mut [f32], right: &mut [f32]) {
-        let n = left.len();
-        self.fcut.update(n);
-        self.cut.update(n);
         for (l, r) in left.iter_mut().zip(right.iter_mut()) {
             if self.morph.tick() {
                 self.mode = self.next_mode;
