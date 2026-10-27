@@ -400,5 +400,6 @@ if(LIVEDAW_BUILD_TESTS)
     # The surface's scribble strip LCDs.
     target_sources(LiveDAWTests PRIVATE
         tests/SurfaceTests.cpp
-        src/ui/Scribble.cpp)
+        src/ui/Scribble.cpp
+        src/ui/MeterComponent.cpp)
 endif()

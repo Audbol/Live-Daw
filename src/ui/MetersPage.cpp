@@ -25,8 +25,8 @@ namespace
 
     const juce::Colour bodyFill { 0xff101010 };
     const juce::Colour segmentOff { 0xff202020 };
-    const juce::Colour litGreen { 0xff00bc38 };
-    const juce::Colour litYellow { 0xfff8c430 };
+    const juce::Colour litGreen = Colours::meterScreenGreen;
+    const juce::Colour litAmber = Colours::meterScreenAmber;
 
     /** The console's meter scale: CLIP, -6, -12, -24, -36, -48, -60 evenly spaced. */
     float meterPos (float db) { return meters::scalePos (db); }
@@ -371,7 +371,7 @@ float MetersPage::peakOf (const Group& group, int index, int channel, bool hold)
 
     // A DCA shows the loudest of its members, before or after their faders.
     const uint32_t bit = 1u << (uint32_t) (group.first + index);
-    const auto point = prefs::meterPageTapPre (ctx, 4) ? MeterPoint::PreFader : MeterPoint::Output;
+    const auto point = prefs::tapPoint (prefs::meterPageTapPre (ctx, 4));
     float peak = 0.0f;
     for (auto kind : { StripKind::Channel, StripKind::Aux, StripKind::Bus, StripKind::Main, StripKind::Matrix })
         for (auto& s : ctx.engine.getStrips (kind))
@@ -479,12 +479,12 @@ void MetersPage::paint (juce::Graphics& g)
                 for (int seg = 0; seg < kSegments; ++seg)
                 {
                     const float pos = ((float) seg + 0.5f) / (float) kSegments;
-                    // [3.1] green, yellow from -18 dB, red at the top.
+                    // [3.1] green, amber (248,196,48) from -18 dB, red at the top.
                     juce::Colour c = segmentOff;
                     if (seg < lit)
-                        c = pos > meterPos (-0.5f) ? Colours::mute : (pos > meterPos (-18.0f) ? litYellow : litGreen);
-                    else if (seg == holdSeg)
-                        c = Colours::amber; // the peak-hold dash
+                        c = pos > meterPos (-0.5f) ? Colours::mute : (pos > meterPos (-18.0f) ? litAmber : litGreen);
+                    else if (seg == holdSeg) // the peak-hold dash (1 s); a held CLIP stays red
+                        c = pos > meterPos (-0.5f) ? Colours::mute : Colours::amber;
                     g.setColour (c);
                     g.fillRect (x, meterBottom - (float) (seg + 1) * segH, colW, juce::jmax (1.0f, segH * 2.0f / 3.0f));
                 }

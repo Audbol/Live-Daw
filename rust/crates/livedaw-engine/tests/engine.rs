@@ -1,6 +1,6 @@
 //! Engine behaviour tests: the WING signal flow end to end.
 
-use livedaw_dsp::wing::{model_index, DYN_MODELS, PROCESS_ORDERS};
+use livedaw_dsp::wing::{model_index, DYN_MODELS, EQ_MODELS_CH, PROCESS_ORDERS};
 mod common;
 use common::{set_channels, unity_console};
 use livedaw_engine::params::{StripKind, NUM_AUX, NUM_MAINS, NUM_MATRICES, WING_BUSES};
@@ -1010,8 +1010,8 @@ fn trim_and_pre_fader_meters() {
     assert!(m.output_peak[0].load() < 1e-6);
 }
 
-/// The WING remote's meter stream has its own copy of the input, pre-fader
-/// and output peaks: taking the UI's leaves them, and taking them leaves the UI's.
+/// The WING remote's meter stream has its own copy of the input, PRE (after
+/// trim) and output peaks: taking the UI's leaves them, and taking them leaves the UI's.
 #[test]
 fn remote_meter_peaks_are_a_second_reader() {
     let mut rig = Rig::new(0, 1, 2);
@@ -1030,6 +1030,48 @@ fn remote_meter_peaks_are_a_second_reader() {
     assert_eq!(ch.remote_peaks.take()[0][0], 0.0);
     rig.run(2);
     assert!(close(ch.remote_peaks.take()[0][0], 0.25, 1e-5));
+}
+
+/// The meters' PRE tap (the trim peak, and the remote stream's PRE) is after
+/// TRIM and before the EQ: on a WING, TRIM moves a PRE strip meter and the EQ
+/// does not. The pre-fader (PFL) peak hears the EQ.
+#[test]
+fn the_pre_meter_tap_follows_trim_not_eq() {
+    let mut rig = Rig::new(0, 1, 2);
+    set_channels(&rig.engine, 1);
+    let ch = rig.ch(0);
+    ch.params.fader_db.store(0.0);
+    // A 750 Hz tone at -12 dB (two periods a block).
+    for (i, v) in rig.inputs[0].iter_mut().enumerate() {
+        *v = 0.25 * (std::f32::consts::TAU * 2.0 * i as f32 / BLOCK as f32).sin();
+    }
+    let measure = |rig: &mut Rig| {
+        rig.run(200);
+        let m = &ch.meters;
+        for v in [&m.trim_peak[0], &m.pfl_peak[0]] {
+            v.store(0.0);
+        }
+        ch.remote_peaks.take();
+        rig.run(4);
+        let db = |v: f32| 20.0 * v.log10();
+        (db(m.trim_peak[0].load()), db(m.pfl_peak[0].load()), db(ch.remote_peaks.take()[1][0]))
+    };
+    let (trim0, pfl0, pre0) = measure(&mut rig);
+    assert!(close(trim0, -12.04, 0.1) && close(pfl0, -12.04, 0.3) && close(pre0, trim0, 0.01), "{trim0} {pfl0} {pre0}");
+    // +12 dB of EQ on the tone: PRE stays, the pre-fader level rises.
+    let spec = &EQ_MODELS_CH[model_index(EQ_MODELS_CH, "STD").unwrap()];
+    let eq = &ch.params.eq;
+    eq.on.store(true, Relaxed);
+    eq.set_model(model_index(EQ_MODELS_CH, "STD").unwrap(), false);
+    eq.values[spec.param_index("2f").unwrap()].store(750.0);
+    eq.values[spec.param_index("2g").unwrap()].store(12.0);
+    let (trim1, pfl1, pre1) = measure(&mut rig);
+    assert!(close(trim1, trim0, 0.05) && close(pre1, trim0, 0.05), "EQ moved PRE: {trim1} {pre1}");
+    assert!(pfl1 > pfl0 + 9.0, "EQ: {pfl0} -> {pfl1}");
+    // +6 dB of TRIM: PRE rises 6 dB.
+    ch.params.input.trim_db.store(6.0206);
+    let (trim2, _, pre2) = measure(&mut rig);
+    assert!(close(trim2, trim0 + 6.02, 0.1) && close(pre2, trim2, 0.01), "TRIM: {trim0} -> {trim2} ({pre2})");
 }
 
 #[test]

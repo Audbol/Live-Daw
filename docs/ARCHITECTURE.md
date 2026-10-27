@@ -787,9 +787,11 @@ blinking LEDs.
   reader of the engine's "peak since last read" meters (input, post-trim, pre-fader
   and output, the monitor paths, the ROUTING sources). It moves every meter on at
   40 Hz with the time that passed, through `MeterBallistics.h` (the full peak at once,
-  24 dB/s fall, 1 s peak hold), so all views of a signal read the same; the views
-  never smooth on their own. The WING remote's meter stream is the second reader:
-  the engine keeps a copy of the strips' input, pre-fader and output peaks and of the
+  60 dB/s fall; a 1 s peak hold only the METERS screen draws), so all views of a
+  signal read the same; the views never smooth on their own. Every PRE meter setting
+  reads the post-trim point (`prefs::tapPoint`), POST the output. The WING remote's
+  meter stream is the second reader: the engine keeps a copy of the strips' input,
+  post-trim (PRE) and output peaks and of the
   monitor paths (`RemotePeaks`, `Engine::monitor_remote_peaks`, outside the C ABI).
 
 ### Multitrack projects, the editor and the recorder screen

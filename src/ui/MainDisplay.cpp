@@ -2,6 +2,7 @@
 #include "dsp/DspUtils.h"
 #include "ui/HomeWidgets.h"
 #include "ui/Icons.h"
+#include "ui/MeterComponent.h"
 #include "ui/PaintHash.h"
 #include "ui/SurfaceLock.h"
 #include "ui/WingPopups.h"
@@ -698,7 +699,7 @@ public:
             for (int ch = 0; ch < 2; ++ch)
             {
                 const bool lit = level[(size_t) ch] >= thresholds[s];
-                const auto on = s == 0 ? Colours::meterRed : (s < 5 ? Colours::meterYellow : Colours::meterGreen);
+                const auto on = leds::meterColour (thresholds[s]); // red CLIP, orange from -18 dB, green below (no yellow)
                 g.setColour (lit ? on : juce::Colour (0xff1d1f22));
                 g.fillRect (x0 + (float) ch * (barW + 4.0f), y + 1.0f, barW, segH - 2.0f);
             }
@@ -742,7 +743,7 @@ private:
         const auto* strip = sourceStrip();
         // AUTO: the METERING tap of the source's kind of strip (manual 5.5 p. 47).
         const int tap = ctx.settings.getIntValue (uiprefs::mainMeterTap, uiprefs::mainMeterTapDefault);
-        const auto point = tap == 1 ? MeterPoint::PreFader : tap == 2 ? MeterPoint::Output
+        const auto point = tap == 1 ? prefs::tapPoint (true) : tap == 2 ? prefs::tapPoint (false)
                                                                      : prefs::meterPoint (ctx, strip != nullptr ? strip->getKind() : StripKind::Main);
         bool changed = false;
         for (int ch = 0; ch < 2; ++ch)
