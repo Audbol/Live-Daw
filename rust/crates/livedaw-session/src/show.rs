@@ -12,6 +12,11 @@
 //! * Snippet - a partial snapshot that belongs to a scene: chosen strips x chosen
 //!   sections. Fired on its own, or automatically straight after its scene.
 //!
+//! As on the WING (manual 5.6 p. 52, fig. 45), a scene can also be a file
+//! added to the show ([`SceneItem`]): a snippet, an audio clip (played on the
+//! USB player), an FX preset (loaded into an FX slot) or a channel preset
+//! (loaded onto a strip). Recalling such a scene loads the item.
+//!
 //! As on the WING's LIBRARY screen, a scene can carry a tag (#1-#128, for
 //! recall by tag), be skipped (GO PREV/NEXT and recalls pass over it) and be
 //! linked to the scene below it (recalling it recalls that one too; the link
@@ -31,10 +36,12 @@ use crate::console::{self, section, ApplyResult, FadeParam, FadeTarget, PluginBr
 use crate::custom::CustomControls;
 use crate::layers::LayerSet;
 use crate::legacy::{self, Converter};
+use crate::presets;
 use crate::refs::{refs_from_string, refs_to_string, StripRef};
 use crate::scope::{self, ChangeCounts, GlobalSafe, RecordedChanges, Recording, Scope};
 use crate::xml::{self, Element};
 use livedaw_dsp::fader::{fader_to_pos, pos_to_fader};
+use livedaw_engine::params::NUM_FX;
 use livedaw_engine::Engine;
 use std::collections::HashMap;
 use std::fs;
@@ -117,6 +124,97 @@ impl Snippet {
     }
 }
 
+/// A scene that isn't a console snapshot: a file added to the show with ADD
+/// ITEM TO SHOW or SAVE + ADD (manual 5.6 p. 52: "Any filetype (Snapshot,
+/// Snippet, Clip or FX preset) added to a Show is referred to as a Scene").
+/// The show keeps the snippet's and presets' contents, so it stays complete
+/// on its own; a clip is the audio file's path.
+#[derive(Debug, Clone)]
+pub enum SceneItem {
+    /// Recalling the scene applies the snippet (recall safes don't apply, as
+    /// for a snippet loaded by hand).
+    Snippet(Snippet),
+    /// Recalling the scene plays the clip on the USB player (the host plays
+    /// it: [`Show::take_pending_clips`]).
+    Clip(PathBuf),
+    /// An FX preset (`.lfx` content) loaded into FX slot `slot` (0-based).
+    Fx { preset: Element, slot: usize },
+    /// A channel preset (`.lchn` content) loaded onto `strip` with its own scope.
+    Channel { preset: Element, strip: StripRef },
+}
+
+/// [`SceneItem`] kinds as numbers (the C ABI): 0 is a console snapshot.
+pub mod item_kind {
+    pub const SNAPSHOT: i32 = 0;
+    pub const SNIPPET: i32 = 1;
+    pub const CLIP: i32 = 2;
+    pub const FX: i32 = 3;
+    pub const CHANNEL: i32 = 4;
+}
+
+impl SceneItem {
+    pub fn kind(&self) -> i32 {
+        match self {
+            Self::Snippet(_) => item_kind::SNIPPET,
+            Self::Clip(_) => item_kind::CLIP,
+            Self::Fx { .. } => item_kind::FX,
+            Self::Channel { .. } => item_kind::CHANNEL,
+        }
+    }
+
+    /// Where it loads: the clip's path, "FX 3", "ch:4"; empty for a snippet.
+    pub fn target(&self) -> String {
+        match self {
+            Self::Snippet(_) => String::new(),
+            Self::Clip(path) => path.to_string_lossy().into_owned(),
+            Self::Fx { slot, .. } => format!("FX {}", slot + 1),
+            Self::Channel { strip, .. } => strip.to_string(),
+        }
+    }
+
+    fn to_xml(&self, origin: &str) -> Element {
+        let mut x = Element::new("Item");
+        x.set("origin", origin);
+        match self {
+            Self::Snippet(sn) => {
+                x.set("type", "snip");
+                x.add(snippet_to_xml(sn));
+            }
+            Self::Clip(path) => {
+                x.set("type", "clip").set("file", path.to_string_lossy().as_ref());
+            }
+            Self::Fx { preset, slot } => {
+                x.set("type", "fx").set("slot", *slot as i32 + 1);
+                x.add(preset.clone());
+            }
+            Self::Channel { preset, strip } => {
+                x.set("type", "chan").set("strip", strip);
+                x.add(preset.clone());
+            }
+        }
+        x
+    }
+
+    /// `None` for an item this version doesn't know (a newer file's).
+    fn read(
+        x: &Element,
+        state_of: &mut dyn FnMut(&Element) -> Option<Element>,
+        refs_of: &dyn Fn(&str) -> Vec<StripRef>,
+    ) -> Option<Self> {
+        let preset = || x.child("LiveDAWPreset").cloned();
+        Some(match x.str_or("type", "") {
+            "snip" => Self::Snippet(read_snippet(x.child("Snippet")?, state_of, refs_of)),
+            "clip" => Self::Clip(PathBuf::from(x.str_or("file", ""))),
+            "fx" => {
+                let slot = usize::try_from(x.int_or("slot", 1) - 1).ok().filter(|s| *s < NUM_FX)?;
+                Self::Fx { preset: preset()?, slot }
+            }
+            "chan" => Self::Channel { preset: preset()?, strip: StripRef::parse(x.str_or("strip", "")) },
+            _ => return None,
+        })
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct Scene {
     pub name: String,
@@ -143,6 +241,11 @@ pub struct Scene {
     pub midi: String,
     pub state: Option<Element>,
     pub snippets: Vec<Snippet>,
+    /// A file added to the show instead of a snapshot (no state, no snippets).
+    pub item: Option<SceneItem>,
+    /// The name of the file an item came from: shown with its file type once
+    /// the scene is renamed (RENAME, manual 5.6 p. 53).
+    pub origin: String,
 }
 
 impl Default for Scene {
@@ -163,11 +266,23 @@ impl Default for Scene {
             midi: String::new(),
             state: None,
             snippets: Vec::new(),
+            item: None,
+            origin: String::new(),
         }
     }
 }
 
 impl Scene {
+    /// A scene for a file added to the show, named after it.
+    pub fn of_item(item: SceneItem, name: &str) -> Self {
+        Self { name: name.into(), origin: name.into(), item: Some(item), ..Self::default() }
+    }
+
+    /// Its [`item_kind`] (0: a console snapshot).
+    pub fn item_kind(&self) -> i32 {
+        self.item.as_ref().map_or(item_kind::SNAPSHOT, SceneItem::kind)
+    }
+
     /// What recalling the scene applies.
     pub fn recall_scope(&self) -> Scope {
         Scope {
@@ -234,6 +349,8 @@ pub struct Show {
     current_scene: i32,
     /// SEND MIDI of the scenes the last recall recalled, in order.
     pending_midi: Vec<String>,
+    /// Clips of the clip scenes the last recall recalled, for the host to play.
+    pending_clips: Vec<PathBuf>,
     fades: Vec<Fade>,
     fade_start: Instant,
     fade_duration: Duration,
@@ -252,6 +369,7 @@ impl Default for Show {
             recorded: None,
             current_scene: -1,
             pending_midi: Vec::new(),
+            pending_clips: Vec::new(),
             fades: Vec::new(),
             fade_start: Instant::now(),
             fade_duration: Duration::ZERO,
@@ -319,8 +437,9 @@ impl Show {
         index
     }
 
+    /// UPDATE (a snapshot scene; an item scene stays as it is).
     pub fn store_scene(&mut self, engine: &Engine, bridge: &mut dyn PluginBridge, index: i32) {
-        if self.scene(index).is_some() {
+        if self.scene(index).is_some_and(|s| s.item.is_none()) {
             let state = console::capture(engine, section::ALL, None, bridge);
             if let Some(scene) = self.scene_mut(index) {
                 scene.state = Some(state);
@@ -332,7 +451,7 @@ impl Show {
     /// PARTIAL UPDATE: stores only what `scope` covers into the scene; the
     /// rest of it stays as it was.
     pub fn store_scene_partial(&mut self, engine: &Engine, bridge: &mut dyn PluginBridge, index: i32, scope: &Scope) {
-        if self.scene(index).is_none() {
+        if self.scene(index).is_none_or(|s| s.item.is_some()) {
             return;
         }
         let partial = scope::capture_scoped(engine, scope, bridge);
@@ -383,6 +502,7 @@ impl Show {
     pub fn recall_scene(&mut self, engine: &Engine, bridge: &mut dyn PluginBridge, index: i32) -> ApplyResult {
         let mut result = ApplyResult::default();
         self.pending_midi.clear();
+        self.pending_clips.clear();
         // Each scene at most once (indices only grow).
         for i in index.. {
             let Some(scene) = self.scene(i).filter(|s| !s.skip) else { break };
@@ -399,6 +519,12 @@ impl Show {
     /// PREV, by tag) recalled, linked ones included; taking them clears them.
     pub fn take_pending_midi(&mut self) -> Vec<String> {
         std::mem::take(&mut self.pending_midi)
+    }
+
+    /// The clips of the clip scenes the last recall recalled (linked ones
+    /// included), for the host to play on the USB player; taking them clears them.
+    pub fn take_pending_clips(&mut self) -> Vec<PathBuf> {
+        std::mem::take(&mut self.pending_clips)
     }
 
     /// The first scene tagged `tag` that isn't skipped, or -1.
@@ -423,6 +549,10 @@ impl Show {
             self.pending_midi.push(midi);
         }
         let Some(scene) = self.scene(index) else { return result };
+        if let Some(item) = scene.item.clone() {
+            let fade_seconds = scene.fade_seconds;
+            return self.recall_item(engine, bridge, index, &item, fade_seconds);
+        }
         let Some(state) = scene.state.clone() else { return result };
         let (scope, fade_seconds) = (scene.recall_scope(), scene.fade_seconds);
         let snippets: Vec<Snippet> = scene.snippets.iter().filter(|s| s.fire_with_scene && s.state.is_some()).cloned().collect();
@@ -448,6 +578,72 @@ impl Show {
         result
     }
 
+    /// Loads an item scene's file: the snippet (with the scene's fade), the
+    /// FX preset into its slot, the channel preset onto its strip, or the
+    /// clip (queued for the host).
+    fn recall_item(
+        &mut self,
+        engine: &Engine,
+        bridge: &mut dyn PluginBridge,
+        index: i32,
+        item: &SceneItem,
+        fade_seconds: f64,
+    ) -> ApplyResult {
+        self.cancel_fade(engine);
+        let mut result = ApplyResult::default();
+        match item {
+            SceneItem::Snippet(sn) => {
+                if let Some(state) = &sn.state {
+                    let fade = fade_seconds > 0.0;
+                    let mut targets = Vec::new();
+                    result = scope::apply_scoped(engine, state, &sn.scope(), None, false, fade.then_some(&mut targets), bridge);
+                    if fade {
+                        self.start_fade(engine, targets, fade_seconds);
+                    }
+                }
+            }
+            SceneItem::Clip(path) => self.pending_clips.push(path.clone()),
+            SceneItem::Fx { preset, slot } => match presets::apply_fx(engine, bridge, preset, *slot) {
+                Ok(warnings) => result.warnings = warnings,
+                Err(e) => result.warnings.push(e),
+            },
+            SceneItem::Channel { preset, strip } => match presets::apply_channel(engine, bridge, preset, strip, None) {
+                Ok(r) => result = r,
+                Err(e) => result.warnings.push(e),
+            },
+        }
+        self.current_scene = index;
+        result
+    }
+
+    /// A scene that isn't in the show (a STARTUP scene file): its state with
+    /// its recall scope and the GLOBAL safes, then its auto-fire snippets; no
+    /// fade. The current scene stays.
+    pub fn apply_scene(&mut self, engine: &Engine, bridge: &mut dyn PluginBridge, scene: &Scene) -> ApplyResult {
+        self.cancel_fade(engine);
+        let Some(state) = &scene.state else { return ApplyResult::default() };
+        let safe = self.global_safe.clone();
+        let mut result = scope::apply_scoped(engine, state, &scene.recall_scope(), Some(&safe), true, None, bridge);
+        for sn in scene.snippets.iter().filter(|s| s.fire_with_scene) {
+            result.merge(Self::apply_snippet(engine, bridge, sn));
+        }
+        result
+    }
+
+    /// A snippet that isn't in the show (a STARTUP snippet file).
+    pub fn apply_snippet(engine: &Engine, bridge: &mut dyn PluginBridge, snippet: &Snippet) -> ApplyResult {
+        match &snippet.state {
+            Some(state) => scope::apply_scoped(engine, state, &snippet.scope(), None, false, None, bridge),
+            None => ApplyResult::default(),
+        }
+    }
+
+    /// ADD ITEM TO SHOW / SAVE + ADD: a scene for `item`, named `name`,
+    /// inserted at `index` (appended if out of range). Returns its index.
+    pub fn add_item(&mut self, item: SceneItem, name: &str, index: i32) -> i32 {
+        self.insert_scene(Scene::of_item(item, name), index)
+    }
+
     /// PARTIAL LOAD (`scope`; `ignore_safes` = NO GLOB) or RESTORE (`None`:
     /// the whole scene, safes included). Only this scene: no links, no
     /// auto-fire snippets, no fade.
@@ -459,6 +655,13 @@ impl Show {
         scope: Option<&Scope>,
         ignore_safes: bool,
     ) -> ApplyResult {
+        if let Some(item) = self.scene(index).and_then(|s| s.item.clone()) {
+            // RESTORE loads an item scene's file; it has no scope to load part of.
+            return match scope {
+                None => self.recall_item(engine, bridge, index, &item, 0.0),
+                Some(_) => ApplyResult::default(),
+            };
+        }
         let Some(state) = self.scene(index).and_then(|s| s.state.clone()) else { return ApplyResult::default() };
         self.cancel_fade(engine);
         let safe = self.global_safe.clone();
@@ -517,16 +720,52 @@ impl Show {
         name: &str,
         scope: &Scope,
     ) -> i32 {
-        if self.scene(scene).is_none() {
+        if self.scene(scene).is_none_or(|s| s.item.is_some()) {
             return -1;
         }
-        let scope = Scope { strips: Some(scope.strips.clone().unwrap_or_default()), ..scope.clone() }.sanitised();
-        let state = scope::capture_scoped(engine, &scope, bridge);
+        let sn = Self::capture_snippet(engine, bridge, name, scope);
         let Some(sc) = self.scene_mut(scene) else { return -1 };
-        let mut sn = Snippet { name: name.into(), state: Some(state), ..Snippet::default() };
-        sn.set_scope(&scope);
         sc.snippets.push(sn);
         sc.snippets.len() as i32 - 1
+    }
+
+    /// A new snippet of what `scope` covers.
+    fn capture_snippet(engine: &Engine, bridge: &mut dyn PluginBridge, name: &str, scope: &Scope) -> Snippet {
+        let scope = Scope { strips: Some(scope.strips.clone().unwrap_or_default()), ..scope.clone() }.sanitised();
+        let state = scope::capture_scoped(engine, &scope, bridge);
+        let mut sn = Snippet { name: name.into(), state: Some(state), ..Snippet::default() };
+        sn.set_scope(&scope);
+        sn
+    }
+
+    /// SAVE + ADD on the SNIP tab: the snippet (of the recorded parameters
+    /// within `scope` after REC / STOP with `recorded`, else of what `scope`
+    /// covers) as a scene of its own at `index`. -1 if there is nothing to save.
+    pub fn add_snippet_scene(
+        &mut self,
+        engine: &Engine,
+        bridge: &mut dyn PluginBridge,
+        name: &str,
+        scope: Option<&Scope>,
+        recorded: bool,
+        index: i32,
+    ) -> i32 {
+        let sn = if recorded {
+            let Some(changes) = self.recorded_changes(scope).filter(|c| !c.is_empty()) else { return -1 };
+            let mut sn = Snippet {
+                name: name.into(),
+                state: Some(changes.capture(engine, bridge)),
+                recorded_parameters: changes.count,
+                ..Snippet::default()
+            };
+            sn.set_scope(&changes.scope());
+            self.recorded = None;
+            sn
+        } else {
+            let Some(scope) = scope else { return -1 };
+            Self::capture_snippet(engine, bridge, name, scope)
+        };
+        self.add_item(SceneItem::Snippet(sn), name, index)
     }
 
     /// UPDATE: captures the snippet's parameters again (each strip only the
@@ -628,7 +867,7 @@ impl Show {
     /// Adds a snippet made elsewhere (a snippet file) to the end of a scene's
     /// snippets; -1 if the scene doesn't exist.
     pub fn insert_snippet(&mut self, scene: i32, snippet: Snippet) -> i32 {
-        let Some(sc) = self.scene_mut(scene) else { return -1 };
+        let Some(sc) = self.scene_mut(scene).filter(|s| s.item.is_none()) else { return -1 };
         sc.snippets.push(snippet);
         sc.snippets.len() as i32 - 1
     }
@@ -727,7 +966,7 @@ impl Show {
         focus: Option<&Scope>,
     ) -> i32 {
         let Some(changes) = self.recorded_changes(focus).filter(|c| !c.is_empty()) else { return -1 };
-        if self.scene(scene).is_none() {
+        if self.scene(scene).is_none_or(|s| s.item.is_some()) {
             return -1;
         }
         let state = changes.capture(engine, bridge);
@@ -976,6 +1215,9 @@ pub(crate) fn scene_to_xml(scene: &Scene) -> Element {
     if let Some(st) = &scene.state {
         sx.add(st.clone());
     }
+    if let Some(item) = &scene.item {
+        sx.add(item.to_xml(&scene.origin));
+    }
     let snippets = sx.add_new("Snippets");
     for sn in &scene.snippets {
         snippets.add(snippet_to_xml(sn));
@@ -1027,7 +1269,13 @@ pub(crate) fn read_scene(
         midi: sx.str_or("midi", "").to_owned(),
         state: state_of(sx),
         snippets: Vec::new(),
+        item: None,
+        origin: String::new(),
     };
+    if let Some(x) = sx.child("Item") {
+        scene.item = SceneItem::read(x, state_of, refs_of);
+        scene.origin = x.str_or("origin", "").to_owned();
+    }
     if let Some(snippets) = sx.child("Snippets") {
         for nx in snippets.children_named("Snippet") {
             scene.snippets.push(read_snippet(nx, state_of, refs_of));

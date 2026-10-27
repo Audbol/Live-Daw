@@ -49,6 +49,25 @@ namespace
         }
     };
 
+    /** A scene's file type chip as fig. 45 shows it: SNAP, SNIP, the clip's
+        format (WAV, MP3...), FX or CHAN, in the LIBRARY tab's colour. */
+    std::pair<juce::String, juce::Colour> sceneChip (const Show::Scene& scene)
+    {
+        switch (scene.item)
+        {
+            case Show::ItemKind::Snippet: return { "SNIP", FileColours::snip };
+            case Show::ItemKind::Clip:
+            {
+                auto ext = juce::File (scene.target).getFileExtension().trimCharactersAtStart (".").toUpperCase();
+                return { ext == "WAVE" ? juce::String ("WAV") : ext.substring (0, 4), FileColours::wav };
+            }
+            case Show::ItemKind::Fx: return { "FX", FileColours::fx };
+            case Show::ItemKind::Channel: return { "CHAN", FileColours::chan };
+            case Show::ItemKind::Snapshot: break;
+        }
+        return { "SNAP", FileColours::snap };
+    }
+
     LibraryScrollLook& libraryScrollLook()
     {
         static LibraryScrollLook look;
@@ -146,7 +165,10 @@ private:
         if (item.isSnippet() && ! snippet)
             return;
 
-        const bool normal = filter == 0 || (filter == 1 && ! item.isSnippet()) || (filter == 2 && item.isSnippet());
+        // SNAP shows the snapshots normally, SNIP the snippets (and the snippet scenes).
+        const bool snapshot = scene->item == Show::ItemKind::Snapshot;
+        const bool normal = filter == 0 || (filter == 1 && ! item.isSnippet() && snapshot)
+                            || (filter == 2 && (item.isSnippet() || scene->item == Show::ItemKind::Snippet));
         auto r = juce::Rectangle<int> (width, height).toFloat();
         g.setColour (Colours::screenPanel);
         g.fillRect (r.removeFromBottom (1.0f));
@@ -166,9 +188,9 @@ private:
         // The type chip with the scene number under it.
         const float chipW = juce::jmin (screenCap (46.0f), t.getWidth() * 0.16f), chipH = juce::jlimit (12.0f, screenCap (18.0f), t.getHeight() * 0.4f);
         auto chipColumn = t.removeFromRight (chipW + 2.0f);
-        const auto chipColour = item.isSnippet() ? FileColours::snip : FileColours::snap;
+        const auto [chipText, chipColour] = item.isSnippet() ? std::pair<juce::String, juce::Colour> { "SNIP", FileColours::snip } : sceneChip (*scene);
         auto chip = chipColumn.withHeight (chipH).withY (t.getY() + 2.0f);
-        drawChip (g, chip, item.isSnippet() ? "SNIP" : "SNAP", chipColour.withMultipliedAlpha (normal ? 1.0f : 0.45f), juce::Colours::black);
+        drawChip (g, chip, chipText, chipColour.withMultipliedAlpha (normal ? 1.0f : 0.45f), juce::Colours::black);
         g.setColour (Dark::textDim);
         g.setFont (wingFontFit (TypeScale::statusCaption * 1.2f, t.getHeight() * 0.3f));
         const juce::String number = juce::String (item.scene + 1) + (item.isSnippet() ? "." + juce::String (item.snippet + 1) : juce::String());
@@ -222,6 +244,15 @@ private:
             auto marker = t.removeFromLeft (16.0f);
             drawIcon (g, Icon::Play, marker.withSizeKeepingCentre (12.0f, 12.0f), FileColours::wav);
             t.removeFromLeft (4.0f);
+        }
+
+        // A renamed item scene: its file's name and type above the name (manual 5.6 p. 53, RENAME).
+        if (! item.isSnippet() && ! snapshot && scene->origin.isNotEmpty() && scene->origin != scene->name)
+        {
+            g.setColour (Dark::textDim.withMultipliedAlpha (normal ? 1.0f : 0.5f));
+            g.setFont (wingFontFit (TypeScale::statusCaption, t.getHeight() * 0.26f));
+            const auto caption = t.removeFromTop (juce::jlimit (6.0f, screenCap (12.0f), t.getHeight() * 0.26f));
+            g.drawFittedText (scene->origin.toUpperCase() + "  (" + chipText + ")", caption.toNearestInt(), juce::Justification::centredLeft, 1, 0.7f);
         }
 
         if (! item.isSnippet())

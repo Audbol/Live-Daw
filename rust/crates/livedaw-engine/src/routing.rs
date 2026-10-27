@@ -256,6 +256,11 @@ impl BusSchedule {
         self.num_waves
     }
 
+    /// The wave of each bus (indices into the bus list).
+    pub(crate) fn waves(&self) -> &[u16] {
+        &self.waves
+    }
+
     /// The buses of wave `w` (indices into the bus list).
     pub(crate) fn wave(&self, w: usize) -> &[u32] {
         &self.order[self.starts[w]..self.starts[w + 1]]

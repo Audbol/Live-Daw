@@ -641,14 +641,7 @@ int EffectsPage::tapParam() const
 {
     if (editor == nullptr || ! editor->isVisible())
         return -1;
-    const auto& spec = models::model (models::Fx, ctx.engine.getFx().getModel (editor->getSlot()));
-    for (size_t i = 0; i < spec.params.size(); ++i)
-    {
-        const auto& p = spec.params[i];
-        if (p.unit == "ms" && p.isContinuous() && (p.id == "time" || p.id == "dly" || p.label.equalsIgnoreCase ("TIME")))
-            return (int) i;
-    }
-    return -1;
+    return TapTempo::timeParam (ctx.engine.getFx().getModel (editor->getSlot()));
 }
 
 void EffectsPage::blankKeyPressed()
@@ -657,14 +650,20 @@ void EffectsPage::blankKeyPressed()
     const int param = tapParam();
     if (param < 0)
         return;
-    const double now = juce::Time::getMillisecondCounterHiRes();
-    const double interval = now - lastTap;
-    lastTap = now;
-    if (interval < 100.0 || interval > 3000.0)
+    const auto interval = tapTempo.tap (juce::Time::getMillisecondCounterHiRes());
+    if (! interval)
         return;
     const int slot = editor->getSlot();
     const auto& p = models::model (models::Fx, ctx.engine.getFx().getModel (slot)).params[(size_t) param];
-    ctx.engine.getFx().params (slot).values[param].store (juce::jlimit (p.min, p.max, (float) interval));
+    ctx.engine.getFx().params (slot).values[param].store (juce::jlimit (p.min, p.max, *interval));
+}
+
+std::optional<bool> EffectsPage::blankKeyBlink (double nowMs) const
+{
+    const int param = tapParam();
+    if (param < 0)
+        return std::nullopt;
+    return tapTempo.ledLit (nowMs, ctx.engine.getFx().params (editor->getSlot()).values[param].load());
 }
 
 std::vector<KnobBinding> EffectsPage::getKnobs()

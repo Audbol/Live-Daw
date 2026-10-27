@@ -856,9 +856,8 @@ void MonitorsPage::timerCallback()
     std::array<float, 2> peak {};
     for (int ch = 0; ch < 2; ++ch)
     {
-        // The phones meter has no other reader; the speakers' comes from the meter bank.
-        phonesPeak[(size_t) ch] = juce::jmax (ctx.engine.phones.peak[ch].exchange (0.0f), phonesPeak[(size_t) ch] * 0.6f);
-        peak[(size_t) ch] = meterPos (dsp::gainToDb (showsPhones() ? phonesPeak[(size_t) ch] : ctx.meters.getMonitor (ch)));
+        // Both paths from the meter bank (the main meter can show them too).
+        peak[(size_t) ch] = meterPos (dsp::gainToDb (showsPhones() ? ctx.meters.getPhones (ch) : ctx.meters.getMonitor (ch)));
     }
     // The limiter's gain reduction (this page is its only reader), held and released.
     for (int path = 0; path < 2; ++path)

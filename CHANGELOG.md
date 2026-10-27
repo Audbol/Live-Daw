@@ -96,9 +96,68 @@ All notable changes to Sidecar are listed here. Versions follow
   Bus 3) is cut at its lowest bus, whose loop send takes the previous block (the WING:
   8 samples on every bus to bus send). WING REMOTE: `/bus/<n>/send/<m>/on`, `lvl`,
   `pre` for every pair but a bus to itself.
+- SOLO SAFE on Channel Home (manual 5.5, Fig. 37-39): the MAIN panel follows SOLO MODE.
+  LIVE shows SOLO BUS; STUDIO the mains 1-4 in a row with their PRE badges; SIP the
+  SOLO SAFE locks on input and aux channels. A closed lock keeps SIP from muting the
+  channel. WING REMOTE: `/aux/n/solosafe` too.
+- Dynamics KEY SOURCE on aux, buses, mains and matrices, as on the WING: SELF or any of
+  BUS 1-16, MAIN 1-4, MTX 1-8, AUX 1-8, at the KEY TAP BUS, DYN, PRE FDR, POST FDR, EQ
+  or INS 2 (the engine keys them; a key from a strip that runs later in the block is
+  one block late). WING REMOTE: `dynsc/src` and `dynsc/tap` of aux, buses, mains and
+  matrices, both ways.
+- MAIN METER SOURCE (SETUP > SURFACE and the meter's right-click) has every source of
+  the manual: MAIN 1-4, MTX 1-8, PHONES, SPEAKERS and SEL CH (the selected strip, at its
+  kind's meter tap with AUTO). WING REMOTE: every `/cfg/mtr/mainmtr` item.
+- Surface lock as in the manual (chapter 10): hold HOME to lock the surface and the
+  touchscreen; other keys beside the display held with HOME are the password, and only
+  HOME with the same keys unlocks. SHOW METER PAGE WHEN LOCKED works: METERS shows while
+  locked. Ctrl+L is HOME alone. WING REMOTE: `/$ctl/$globals/lockmtr` and the read-only
+  lock string `/$ctl/$stat/cnslock`.
+- Tap tempo on the INS 1 / INS 2 screens of HOME, as on EFFECTS: the blank key taps
+  the TIME of the delay the insert holds.
+- Recorder **SETTINGS** (status bar, as on the WING-LIVE screen, manual 8.1 p. 85-86):
+  **SHOW METERS** shows or hides the meters of the armed tracks, and **AUTO INPUT
+  SELECT** with **[STOP] / [PLAY] / [RECORD] INPUT** (KEEP, MAIN or ALT): when the
+  recorder stops, plays or records, the global MAIN / ALT switch goes to MAIN or ALT.
+  The channels follow it while INPUT SELECT is GLOBAL, as VIRTUAL SOUNDCHECK sets it,
+  so a virtual soundcheck can hear the recording on PLAY and the band on STOP and
+  RECORD. The switch happens before the first sample is recorded. WING REMOTE:
+  `/cards/wlive/meters`, `autoin`, `auto_stop`, `auto_play`, `auto_rec`.
+- Recorder **MODE A->B** (manual 8.1 fig. 75): MODE now steps PLAY (yellow), A->B
+  (blue) and LOOP (green). A->B plays from the range's start and stops exactly at its
+  end. The knobs under the display set the range (START and END, the loop borders in
+  LOOP). The mode is kept in the project; older projects play as before. WING REMOTE:
+  `/cards/wlive/1/cfg/playmode` (and `2`). C ABI version 18: `ld_rec_set_range`.
+- Shows hold files as scenes (manual 5.6 p. 52, fig. 45): a snippet, an audio clip, an
+  FX preset or a channel preset. **ADD ITEM TO SHOW** (SHOW tab; also **ADD** in the
+  status bar) adds the file selected at INT or USB after the selected scene. A scene
+  file comes in as a scene; an FX preset loads into the FX tab's slot, a channel
+  preset onto the selected strip. **SAVE + ADD** on SNIP, FX and CHAN saves and adds
+  in one go (on SNAP, SAVE already adds the scene). Recalling such a scene (GO, GO
+  NEXT, a tag, MIDI, a WING remote) loads the file: the snippet (with the scene's
+  fade), the preset, or the clip on the USB player. The scene list shows the type
+  (SNIP, WAV, FX, CHAN) and, once renamed, the file's name. The show keeps the
+  snippet and presets in itself and the clip's path. The SHOW tab shows the files
+  that can be added normally. Older shows load unchanged; older Sidecar versions see
+  such scenes as empty. C ABI version 18: `ld_scene_item_kind`, `ld_scene_item_text`,
+  `ld_show_add_item`, `ld_show_add_snippet_scene`, `ld_show_take_clips`.
+- **STARTUP** files (manual 5.6 p. 52 and chapter 10): a show, scene and snippet whose
+  names start with `STARTUP` in the library's `STARTUP` folder
+  (`Documents/Sidecar/Library/STARTUP`) load when Sidecar starts: the show first
+  (Sidecar's `.lshow`, else a WING `.show`), then the scene (`.lsnap`, else a WING
+  `.snap`) and the snippet (`.lsnip`). Holding SHIFT while Sidecar starts (the WING:
+  holding LIBRARY) or `--no-startup` skips them. C ABI version 18:
+  `ld_show_apply_library`.
 
 ### Changed
 
+- SEL DBL CLICK = BUSFX opens INS 1 on mains and matrices too (it did on buses only),
+  and INS 2 when INS 1 has no FX (manual 5.5 p. 48).
+- The blank key's LED blinks at the tempo while it can tap one (manual 5.5 p. 48); it
+  was lit steadily.
+- Surface lock: holding HOME (or Ctrl+L) now also locks the touchscreen and the
+  display's knobs, leaving only the keys beside the display to unlock (it locked the
+  surface only).
 - A matrix's DIRECT INPUT takes the WING's choices (WING manual 6.4: "AES/EBU, Phones,
   Speakers or Solo bus"): OFF, AES (no AES/EBU input here: silent), MON.PH, MON.SPK,
   MON.BUS, a block late (the monitor runs after the matrices), with ON, LEVEL and
@@ -109,11 +168,29 @@ All notable changes to Sidecar are listed here. Versions follow
 - ROUTING > OUTPUTS' USER SIGNAL group holds USR 1-56 (before: the channels' own
   outputs). Channels' direct outs from older shows still play and show on their
   outputs; new ones are made with user signals.
-- C ABI version 18: `StripParams::directPre` is gone and `directSource` is the matrix
+- C ABI version 19: `StripParams::directPre` is gone and `directSource` is the matrix
   DIRECT IN choice; `UserSignalParams`, `UserPatchParams`, `ld_engine_user_signals`,
   `ld_engine_user_patches`, `ld_source_set_user_patch`, `ld_engine_output_patch`,
   `ld_engine_route_output_source`, `ld_engine_clear_output`, `ld_strip_source_input`;
   `kNumSources` grows by the 56 USR sources.
+
+### Fixed
+
+- WING Edit (tested with 3.3.4 on both console models): its model request after
+  connecting (it sets `/$syscfg/$cnsmdl` to "ModelRequest") is answered with the model,
+  and any set Sidecar refuses over the Native protocol now answers the value that
+  stands instead of nothing, so the client shows the console's value (an FX slot
+  hosting a plugin answers EXT when WING Edit picks another model for it).
+- WING Edit PC -> MIXER no longer unpatches LOCAL OUT: an output nothing feeds read
+  the factory WING's patch (LCL 3 as BUS 5 but AES50 A 3 as OFF, one port in
+  Sidecar), and writing both back left them OFF. Unpatched outputs read OFF.
+- WING remote values are on the parameter's steps, as the console reports them:
+  model defaults between two steps (HALL's decay 2.00 s, a Q of 2.00) read 2.03 s /
+  1.996 as WING Edit shows them, instead of differing from it.
+- A processing model changed in Sidecar or by another client (FX slot, GATE, EQ,
+  DYNAMICS) sends all the new model's parameters to WING remote clients, also those
+  equal to the old model's at the same position, which WING Edit otherwise left at its
+  own defaults.
 
 ## [0.1.5] - beta
 

@@ -215,19 +215,36 @@ namespace
     };
 
     /** The MAIN panel's column of mains 1-4: lit blue while the strip feeds that
-        main; click to switch the send. */
+        main; click to switch the send. Wider than tall it is a row with a PRE
+        badge over each main (SOLO MODE STUDIO, manual 5.5 p. 46, Fig. 38),
+        lit while that send is pre-fader. */
     class MainSquares final : public juce::Component, private juce::Timer
     {
     public:
         explicit MainSquares (StripParams& p) : params (p) { startTimerHz (6); }
 
+        bool isRow() const { return getWidth() > getHeight(); }
+
         void paint (juce::Graphics& g) override
         {
-            const float h = (float) getHeight() / (float) kNumMains;
-            const float s = juce::jmin (h * 0.9f, (float) getWidth());
+            const bool row = isRow();
+            const float h = row ? (float) getHeight() * 0.55f : (float) getHeight() / (float) kNumMains;
+            const float w = row ? (float) getWidth() / (float) kNumMains : (float) getWidth();
+            const float s = juce::jmin (h * 0.9f, w * 0.9f);
             for (int i = 0; i < kNumMains; ++i)
             {
-                auto r = juce::Rectangle<float> (0.0f, (float) i * h, (float) getWidth(), h).withSizeKeepingCentre (s, s);
+                auto cell = row ? juce::Rectangle<float> ((float) i * w, (float) getHeight() - h, w, h) : juce::Rectangle<float> (0.0f, (float) i * h, w, h);
+                auto r = cell.withSizeKeepingCentre (s, s);
+                if (row)
+                {
+                    const bool pre = params.mains[i].pre.load();
+                    auto badge = juce::Rectangle<float> (cell.getX(), 0.0f, w, (float) getHeight() - h).withSizeKeepingCentre (s, ((float) getHeight() - h) * 0.7f);
+                    g.setColour (colours::well);
+                    g.fillRoundedRectangle (badge, 2.0f);
+                    g.setColour (pre ? Colours::text : Colours::textDim);
+                    g.setFont (wingFontFit (TypeScale::caption, badge.getHeight() * 0.85f, WingWeight::SemiBold));
+                    g.drawText ("PRE", badge.toNearestInt(), juce::Justification::centred);
+                }
                 const bool on = params.mains[i].on.load();
                 g.setColour (on ? juce::Colour (0xff00a4f8) : colours::well); // WING 3.1: a lit main in light blue
                 g.fillRect (r);
@@ -239,7 +256,7 @@ namespace
 
         void mouseUp (const juce::MouseEvent& e) override
         {
-            const int i = juce::jlimit (0, kNumMains - 1, e.y * kNumMains / juce::jmax (1, getHeight()));
+            const int i = juce::jlimit (0, kNumMains - 1, isRow() ? e.x * kNumMains / juce::jmax (1, getWidth()) : e.y * kNumMains / juce::jmax (1, getHeight()));
             params.mains[i].on = ! params.mains[i].on.load();
             repaint();
         }
@@ -362,6 +379,23 @@ public:
         soloB->setTooltip ("Solo bus B (speakers)");
         soloBusLabel = &label ("SOLO BUS", 14.0f, Colours::caption);
         soloBusLabel->setJustificationType (juce::Justification::centred);
+        // SOLO SAFE (manual 5.5 p. 46, Fig. 39): with SOLO MODE SIP the input
+        // and aux channels (the strips SIP mutes) show an open and a closed
+        // lock in place of SOLO BUS; closed, SIP leaves the channel unmuted.
+        if (strip.isInput())
+        {
+            safeOff = &key ({}, Icon::LockOpen, colours::soloBus);
+            safeOff->isOn = [&p] { return ! p.soloSafe.load(); };
+            safeOff->onClick = [&p] { p.soloSafe = false; };
+            safeOff->setTooltip ("Not solo safe: SIP mutes the channel while another one is soloed");
+            safeOn = &key ({}, Icon::LockClosed, colours::soloBus);
+            safeOn->isOn = [&p] { return p.soloSafe.load(); };
+            safeOn->onClick = [&p] { p.soloSafe = true; };
+            safeOn->setTooltip ("Solo safe: SIP never mutes the channel");
+            safeLabel = &label ("SOLO SAFE", 14.0f, Colours::caption);
+            safeLabel->setJustificationType (juce::Justification::centred);
+        }
+        showSoloMode();
         startTimer (400);
     }
 
@@ -425,13 +459,23 @@ public:
         // MAIN: the pan / width ring 79 px across at (911, 547), the mains 1-4
         // as 18 px squares 20 apart at (1010, 548), SOLO BUS (centred at y
         // 656) over two 56 px keys at (914, 674).
+        // STUDIO (Fig. 38): no per-channel solo bus; the ring larger, the mains
+        // in a row under it with their PRE badges. SIP (Fig. 39): SOLO SAFE's
+        // locks where SOLO BUS is.
         box (mainArea, "MAIN", true);
-        pan->setBounds (wingRect (907.5f, 543.5f, 86.0f, 86.0f));
+        const bool studio = shownSoloMode == ld::kSoloStudio;
+        pan->setBounds (studio ? wingRect (912.0f, 532.0f, 116.0f, 116.0f) : wingRect (907.5f, 543.5f, 86.0f, 86.0f));
         if (mains != nullptr)
-            mains->setBounds (wingRect (1010.0f, 548.0f, 18.0f, 80.0f));
+            mains->setBounds (studio ? wingRect (908.0f, 664.0f, 124.0f, 66.0f) : wingRect (1010.0f, 548.0f, 18.0f, 80.0f));
         soloBusLabel->setBounds (wingRect (900.0f, 642.0f, 140.0f, 28.0f));
         soloA->setBounds (wingRect (914.0f, 674.0f, 57.0f, 56.0f));
         soloB->setBounds (wingRect (969.0f, 674.0f, 57.0f, 56.0f));
+        if (safeLabel != nullptr)
+        {
+            safeLabel->setBounds (soloBusLabel->getBounds());
+            safeOff->setBounds (soloA->getBounds());
+            safeOn->setBounds (soloB->getBounds());
+        }
     }
 
     void paint (juce::Graphics& g) override
@@ -489,8 +533,26 @@ private:
         return src;
     }
 
+    /** The MAIN panel follows SETUP > AUDIO > SOLO MODE (manual 5.5 p. 46,
+        Fig. 37-39): LIVE shows SOLO BUS, SIP the input and aux channels'
+        SOLO SAFE, STUDIO neither. */
+    void showSoloMode()
+    {
+        const int mode = ctx.engine.soloMode.load();
+        const bool changed = mode != shownSoloMode;
+        shownSoloMode = mode;
+        for (juce::Component* c : { (juce::Component*) soloA, (juce::Component*) soloB, (juce::Component*) soloBusLabel })
+            c->setVisible (mode == ld::kSoloLive);
+        for (juce::Component* c : { (juce::Component*) safeOff, (juce::Component*) safeOn, (juce::Component*) safeLabel })
+            if (c != nullptr)
+                c->setVisible (mode == ld::kSoloSip);
+        if (changed && ! getLocalBounds().isEmpty())
+            resized();
+    }
+
     void timerCallback() override
     {
+        showSoloMode();
         // Without a source there is nothing to mute or power; ROUTING can change both.
         for (auto* k : { sourceMute, phantom })
             if (k != nullptr)
@@ -517,8 +579,10 @@ private:
     SourceTile* source = nullptr;
     FeedGrid* feed = nullptr;
     IconKey *sourceMute = nullptr, *phantom = nullptr, *loCut = nullptr, *hiCut = nullptr, *tool = nullptr;
-    IconKey *soloA = nullptr, *soloB = nullptr;
+    IconKey *soloA = nullptr, *soloB = nullptr, *safeOff = nullptr, *safeOn = nullptr;
     juce::Label* phantomLabel = nullptr;
+    juce::Label* safeLabel = nullptr;
+    int shownSoloMode = -1;
     KnobBox *gain = nullptr, *trim = nullptr;
     ProcessorThumbs* processors = nullptr;
     LevelPanel* level = nullptr;
@@ -2185,6 +2249,43 @@ HomePage::HomePage (UiContext& c) : ctx (c)
 }
 
 HomePage::~HomePage() = default;
+
+int HomePage::tapSlot() const
+{
+    if (strip == nullptr || overlay != nullptr || (current != HomeTab::PreInsert && current != HomeTab::PostInsert))
+        return -1;
+    const auto& ins = current == HomeTab::PreInsert ? strip->params.preInsert : strip->params.postInsert;
+    // INS 2 in automix mode has no FX.
+    if (current == HomeTab::PostInsert && ins.mode.load() != 0)
+        return -1;
+    const int slot = ins.fx.load();
+    if (slot < 0 || TapTempo::timeParam (ctx.engine.getFx().getModel (slot)) < 0)
+        return -1;
+    return slot;
+}
+
+void HomePage::blankKeyPressed()
+{
+    // Tap tempo, as on EFFECTS: the time between two taps (0.1 to 3 s) becomes the delay time.
+    const int slot = tapSlot();
+    if (slot < 0)
+        return;
+    const auto interval = tapTempo.tap (juce::Time::getMillisecondCounterHiRes());
+    if (! interval)
+        return;
+    const int model = ctx.engine.getFx().getModel (slot);
+    const int param = TapTempo::timeParam (model);
+    const auto& p = models::model (models::Fx, model).params[(size_t) param];
+    ctx.engine.getFx().params (slot).values[param].store (juce::jlimit (p.min, p.max, *interval));
+}
+
+std::optional<bool> HomePage::blankKeyBlink (double nowMs) const
+{
+    const int slot = tapSlot();
+    if (slot < 0)
+        return std::nullopt;
+    return tapTempo.ledLit (nowMs, ctx.engine.getFx().params (slot).values[TapTempo::timeParam (ctx.engine.getFx().getModel (slot))].load());
+}
 
 bool HomePage::isAvailable (HomeTab t, const Strip* s) const
 {

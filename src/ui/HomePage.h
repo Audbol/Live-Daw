@@ -2,6 +2,7 @@
 
 #include "ui/DisplayPage.h"
 #include "ui/HomeScreens.h"
+#include "ui/TapTempo.h"
 
 #include <memory>
 
@@ -31,6 +32,12 @@ public:
     bool usesKnobs() const override;
     void refresh() override;
 
+    /** The blank key taps the tempo of a delay on the INS 1 / INS 2 screen
+        (manual 4.1, TapTempo), as on EFFECTS. */
+    bool hasBlankKeyFunction() const override { return tapSlot() >= 0; }
+    void blankKeyPressed() override;
+    std::optional<bool> blankKeyBlink (double nowMs) const override;
+
     void paint (juce::Graphics&) override;
     void resized() override;
 
@@ -53,6 +60,8 @@ private:
     void openOverlay (OverlayKind);
     void closeOverlay();
     bool isAvailable (HomeTab, const Strip*) const;
+    /** The FX slot of the insert screen shown, when its device has a delay TIME; else -1. */
+    int tapSlot() const;
     static bool isOverviewGroup (HomeTab t) { return t == HomeTab::Home || t == HomeTab::Icon || t == HomeTab::Name || t == HomeTab::Tags; }
 
     UiContext& ctx;
@@ -66,6 +75,7 @@ private:
     std::unique_ptr<HomeScreen> content;
     std::unique_ptr<home::OverlayScreen> overlay;
     OverlayKind overlayKind = OverlayKind::None;
+    TapTempo tapTempo;
 };
 
 } // namespace livedaw::ui

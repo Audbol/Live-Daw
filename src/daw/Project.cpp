@@ -430,6 +430,8 @@ void Project::setLoop (int64 start, int64 end)
 }
 
 void Project::setLoopOn (bool on) { state.setProperty (ids::loopOn, on, nullptr); }
+bool Project::isAToBOn() const { return (bool) state.getProperty (ids::abOn, false); }
+void Project::setAToBOn (bool on) { state.setProperty (ids::abOn, on, nullptr); }
 
 double Project::samplesPerBeat() const
 {

@@ -28,7 +28,7 @@ static_assert (sizeof (std::atomic<float>) == 4 && std::atomic<float>::is_always
 static_assert (sizeof (std::atomic<bool>) == 1 && std::atomic<bool>::is_always_lock_free);
 static_assert (sizeof (std::atomic<int32_t>) == 4 && std::atomic<int32_t>::is_always_lock_free);
 
-constexpr int kAbiVersion = 18;
+constexpr int kAbiVersion = 19;
 constexpr int kMaxBuses = 16384;
 constexpr int kNumMains = 4;
 constexpr int kNumMatrices = 8;
@@ -60,19 +60,23 @@ constexpr int32_t kUsbPlayerSourceBase = 0x20000;
     (n < kNumOscillators); ld_engine_oscillators holds their settings. */
 constexpr int kNumOscillators = 2;
 constexpr int32_t kOscSourceBase = 0x30000;
-/** ABI 18, the strip sources (manual 2.6): a bus, main or matrix as a
+/** ABI 19, the strip sources (manual 2.6): a bus, main or matrix as a
     channel's source, input kStripSourceBase + n: the WING's $BUS (n 0-31, a
     bus slot * 2 + side), $MAIN (32-39) and $MTX (40-55) signals
     (ld_strip_source_input). A channel hears them one block late. */
 constexpr int32_t kStripSourceBase = 0x40000;
 constexpr int kNumStripSources = 2 * (kWingBuses + kNumMains + kNumMatrices);
-/** ABI 18, the USER SIGNAL group (USR): USR n is input kUsrSourceBase + n - 1;
+/** ABI 19, the USER SIGNAL group (USR): USR n is input kUsrSourceBase + n - 1;
     USR 1-24 user signals (ld_engine_user_signals), USR 25-56 user patches
     (ld_engine_user_patches). */
 constexpr int32_t kUsrSourceBase = 0x50000;
 constexpr int kNumUserSignals = 24;
 constexpr int kNumUserPatches = 32;
 constexpr int kNumUsrSources = kNumUserSignals + kNumUserPatches;
+/** DYNAMICS KEY SOURCE of aux, buses, mains and matrices (DynSlotParams::scSource):
+    kKeyStripBase * kind (StripKindId) + index; they take one of kNumOutputKeyTaps taps. */
+constexpr int32_t kKeyStripBase = 0x10000;
+constexpr int kNumOutputKeyTaps = 6;
 /** RECORDER tap codes (ld_usb_rec_tap): -1 off, 0.. an input index (a source),
     kUsbTapStripBase + kind * 0x100000 + (number - 1) * 2 + channel a strip. */
 constexpr int32_t kUsbTapStripBase = 0x01000000;
@@ -151,7 +155,11 @@ struct DynSlotParams
     std::atomic<float> mix, gain;
     std::atomic<int32_t> scFilter; // list 2
     std::atomic<float> scFreq, scQ;
-    std::atomic<int32_t> scSource, scTap; // source -1 = self, else channel index
+    // scSource: -1 = self, else a channel index (input channels' list), or
+    // kKeyStripBase * kind + index for an aux, bus, main or matrix (the list
+    // of aux, buses, mains and matrices). scTap: list 1 from a channel, else
+    // BUS, DYN, PFL, AFL, EQ, INS2 (kNumOutputKeyTaps).
+    std::atomic<int32_t> scSource, scTap;
     std::atomic<int32_t> xoKind; // list 3
     std::atomic<float> xoFreq, xoQ, xoDepth;
 };
@@ -227,7 +235,7 @@ struct StripParams
 
     std::atomic<uint32_t> dcaMask, muteGroupMask;
 
-    // Matrices: DIRECT IN (manual 6.4). ABI 18: directSource is a
+    // Matrices: DIRECT IN (manual 6.4). ABI 19: directSource is a
     // MatrixDirectInput (before, an input channel), no PRE.
     std::atomic<bool> directOn, directInvert;
     std::atomic<int32_t> directSource;
@@ -346,13 +354,13 @@ enum SourceMode : int32_t
 };
 
 /** Sources: hardware ports 0..kNumHwSources-1, the playback channels, the USB
-    PLAYER, the oscillators, then the USR group (ABI 18). */
+    PLAYER, the oscillators, then the USR group (ABI 19). */
 constexpr int kNumHwSources = 576;
 constexpr int kNumSources = kNumHwSources + kNumPlaybackChannels + kUsbChannels + kNumOscillators + kNumUsrSources;
-/** ABI 18: hardware outputs the output patch can feed (ld_engine_output_patch). */
+/** ABI 19: hardware outputs the output patch can feed (ld_engine_output_patch). */
 constexpr int kNumPatchOutputs = kNumHwSources;
 
-/** ABI 18: a matrix's DIRECT IN (StripParams::directSource, /mtx/n/dir/in). */
+/** ABI 19: a matrix's DIRECT IN (StripParams::directSource, /mtx/n/dir/in). */
 enum MatrixDirectInput : int32_t
 {
     kDirectOff = 0,
@@ -363,7 +371,7 @@ enum MatrixDirectInput : int32_t
     kNumMatrixDirectInputs = 5
 };
 
-/** ABI 18, a user signal (USR 1-24; ld_engine_user_signals): a mono copy of a
+/** ABI 19, a user signal (USR 1-24; ld_engine_user_signals): a mono copy of a
     strip. group: 0 OFF, 1 CH, 2 AUX, 3 BUS, 4 MAIN, 5 MTX; number 1-based (a
     bus by its number); side 0 L+R, 1 L, 2 R; post: POST (else PRE, the tap point). */
 struct UserSignalParams
@@ -372,7 +380,7 @@ struct UserSignalParams
     std::atomic<bool> post;
 };
 
-/** ABI 18, a user patch (USR 25-56; ld_engine_user_patches): the external
+/** ABI 19, a user patch (USR 25-56; ld_engine_user_patches): the external
     source it copies (a port, playback channel or USB PLAYER input), -1 OFF. */
 struct UserPatchParams
 {
@@ -623,7 +631,7 @@ struct LayoutInfo
         offDcaMon,
         // ABI 16 (the console model)
         consoleModelInfo,
-        // ABI 18 (routing: matrix DIRECT IN, USR sources)
+        // ABI 19 (routing: matrix DIRECT IN, USR sources)
         offDirectSource, userSignal, offUserSignalPost, userPatch;
 };
 
@@ -1071,6 +1079,22 @@ extern "C"
         the new index, or -1 with `message`. */
     int32_t ld_show_import_library (Show*, const char* path, size_t len, int32_t index, LdString** message);
 
+    // Show items (ABI 18): files added to a show as scenes (manual 5.6 p. 52)
+    /** 0 = a console snapshot, 1 = a snippet, 2 = a clip, 3 = an FX preset, 4 = a channel preset; -1 = no such scene. */
+    int32_t ld_scene_item_kind (Show*, int32_t scene);
+    /** what 0: the file name it was added as; 1: where it loads (the clip's path, "FX 3", "ch:4"). */
+    LdString* ld_scene_item_text (Show*, int32_t scene, int32_t what);
+    /** ADD ITEM TO SHOW: a scene, snippet, clip, FX preset (into `fxSlot`) or channel preset (onto
+        `strip`) file as a scene at `index` (-1: appended); its index, or -1 with `message`. */
+    int32_t ld_show_add_item (Show*, const char* path, size_t len, int32_t index, int32_t fxSlot, StripRefC strip, LdString** message);
+    /** SAVE + ADD on SNIP: a snippet scene at `index` (recorded: the recorded parameters within `scope`,
+        null = all; else what `scope` covers). -1 if there is nothing to save. */
+    int32_t ld_show_add_snippet_scene (Show*, const Engine*, const char* name, size_t len, const ScopeC* scope, bool recorded, int32_t index);
+    /** The clips of the clip scenes the last recall recalled, one path per line; taking them clears them. */
+    LdString* ld_show_take_clips (Show*);
+    /** STARTUP: a scene or snippet file loaded onto the console without joining the show. */
+    bool ld_show_apply_library (Show*, const Engine*, const char* path, size_t len, ApplyResultC* out, LdString** message);
+
     bool ld_show_is_fading (Show*);
     void ld_show_cancel_fade (Show*, const Engine*);
     bool ld_show_tick (Show*, const Engine*);
@@ -1151,6 +1175,8 @@ extern "C"
     void ld_rec_stop (const Engine*);
     void ld_rec_locate (const Engine*, int64_t position);
     void ld_rec_set_loop (const Engine*, int64_t start, int64_t end, bool enabled);
+    /** MODE (ABI 18): 0 = PLAY, 1 = A->B (playback stops at `end`), 2 = LOOP. */
+    void ld_rec_set_range (const Engine*, int64_t start, int64_t end, int32_t mode);
     /** Writes the loop range (pointers may be null); returns whether it is enabled. */
     bool ld_rec_loop (const Engine*, int64_t* start, int64_t* end);
     /** Copies the playlist (the arrays may be freed afterwards). */
@@ -1406,7 +1432,7 @@ extern "C"
     /** Monitor paths (bit 0 = SPEAKERS, bit 1 = PHONES) DCA `dca` controls (named MON A: PHONES, MON B: SPEAKERS, MON LVL). */
     uint32_t ld_engine_dca_monitor_paths (const Engine*, int32_t dca);
 
-    // Routing (ABI 18; livedaw-engine routing.rs, sources.rs)
+    // Routing (ABI 19; livedaw-engine routing.rs, sources.rs)
     /** USR 1-24: what each user signal copies (*count entries, shared memory). */
     UserSignalParams* ld_engine_user_signals (const Engine*, int32_t* count);
     /** USR 25-56: the external source each user patch copies (*count entries). */

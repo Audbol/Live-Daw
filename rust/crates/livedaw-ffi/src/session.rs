@@ -10,7 +10,7 @@ use livedaw_session::console::{CapturedInsert, InsertMode, PluginBridge, Restore
 use livedaw_session::layers::{FaderRef, Layer, LayerSet, SpillKind};
 use livedaw_session::library::{self, FileType};
 use livedaw_session::presets::{self, PresetType};
-use livedaw_session::{ApplyResult, ConsoleModel, GlobalSafe, Scope, Show, StripRef};
+use livedaw_session::{ApplyResult, ConsoleModel, GlobalSafe, Scene, Scope, Show, StripRef};
 use std::borrow::Cow;
 use std::ffi::c_void;
 use std::path::PathBuf;
@@ -1145,6 +1145,122 @@ pub unsafe extern "C" fn ld_show_import_library(
         Err(msg) => {
             write_string(message, msg);
             -1
+        }
+    }
+}
+
+// ---- show items: files added to a show (manual 5.6 p. 52), STARTUP files ---------------------
+
+/// A scene's item kind (ABI 18): 0 = a console snapshot, 1 = a snippet, 2 = a
+/// clip, 3 = an FX preset, 4 = a channel preset; -1 if there is no such scene.
+#[no_mangle]
+pub unsafe extern "C" fn ld_scene_item_kind(s: *mut LdShow, scene: i32) -> i32 {
+    show(s).and_then(|s| s.show.scene(scene).map(Scene::item_kind)).unwrap_or(-1)
+}
+
+/// An item scene's file name as it was added (`what` 0), or where it loads
+/// (`what` 1: the clip's path, "FX 3", a strip reference such as "ch:4").
+#[no_mangle]
+pub unsafe extern "C" fn ld_scene_item_text(s: *mut LdShow, scene: i32, what: i32) -> *mut LdString {
+    LdString::new(
+        show(s)
+            .and_then(|s| s.show.scene(scene))
+            .map(|sc| if what == 0 { sc.origin.clone() } else { sc.item.as_ref().map(|i| i.target()).unwrap_or_default() })
+            .unwrap_or_default(),
+    )
+}
+
+/// ADD ITEM TO SHOW: the file at `path` as a scene at `index` (-1: appended):
+/// a scene file is imported, a snippet file, clip, FX preset (into FX slot
+/// `fx_slot`, 0-based) or channel preset (onto `strip`) becomes an item
+/// scene. Returns its index, or -1 with `message`.
+#[no_mangle]
+pub unsafe extern "C" fn ld_show_add_item(
+    s: *mut LdShow,
+    path: *const u8,
+    path_len: usize,
+    index: i32,
+    fx_slot: i32,
+    strip: LdStripRef,
+    message: *mut *mut LdString,
+) -> i32 {
+    let Some(s) = show(s) else { return -1 };
+    let path = PathBuf::from(str_arg(path, path_len).into_owned());
+    let r = guard(Err("internal error".into()), || {
+        if path.extension().is_some_and(|e| e.eq_ignore_ascii_case(library::SCENE_EXTENSION)) {
+            return library::import_scene(&mut s.show, &library::load(&path)?, index);
+        }
+        let (item, name) = library::item_from_file(&path, usize::try_from(fx_slot).unwrap_or(usize::MAX), strip.to_ref())?;
+        Ok(s.show.add_item(item, &name, index))
+    });
+    match r {
+        Ok(i) => i,
+        Err(msg) => {
+            write_string(message, msg);
+            -1
+        }
+    }
+}
+
+/// SAVE + ADD on the SNIP tab: a snippet as a scene of its own at `index`;
+/// with `recorded` the parameters REC / STOP recorded within `scope` (null:
+/// all of them), else what `scope` covers. -1 if there is nothing to save.
+#[no_mangle]
+pub unsafe extern "C" fn ld_show_add_snippet_scene(
+    s: *mut LdShow,
+    e: *const Engine,
+    name: *const u8,
+    name_len: usize,
+    scope: *const LdScope,
+    recorded: bool,
+    index: i32,
+) -> i32 {
+    let (Some(s), Some(e)) = (show(s), eng(e)) else { return -1 };
+    let name = str_arg(name, name_len);
+    let scope = scope_arg(scope);
+    guard(-1, || s.show.add_snippet_scene(e, &mut s.bridge, &name, scope.as_ref(), recorded, index))
+}
+
+/// The clips of the clip scenes the last ld_show_recall_scene recalled, one
+/// path per line (empty if none); taking them clears them.
+#[no_mangle]
+pub unsafe extern "C" fn ld_show_take_clips(s: *mut LdShow) -> *mut LdString {
+    LdString::new(
+        show(s)
+            .map(|s| s.show.take_pending_clips().iter().map(|p| p.to_string_lossy().into_owned()).collect::<Vec<_>>().join("\n"))
+            .unwrap_or_default(),
+    )
+}
+
+/// STARTUP: loads the scene or snippet file at `path` onto the console
+/// without adding it to the show (a scene with its scope and the GLOBAL
+/// safes). False with `message` if it isn't one.
+#[no_mangle]
+pub unsafe extern "C" fn ld_show_apply_library(
+    s: *mut LdShow,
+    e: *const Engine,
+    path: *const u8,
+    path_len: usize,
+    out: *mut LdApplyResult,
+    message: *mut *mut LdString,
+) -> bool {
+    let (Some(s), Some(e)) = (show(s), eng(e)) else { return false };
+    let path = PathBuf::from(str_arg(path, path_len).into_owned());
+    let r = guard(Err("internal error".into()), || {
+        Ok(match library::read_file(&library::load(&path)?)? {
+            Ok(scene) => s.show.apply_scene(e, &mut s.bridge, &scene),
+            Err(snippet) => Show::apply_snippet(e, &mut s.bridge, &snippet),
+        })
+    });
+    match r {
+        Ok(result) => {
+            write_result(out, result);
+            true
+        }
+        Err(msg) => {
+            write_result(out, ApplyResult::default());
+            write_string(message, msg);
+            false
         }
     }
 }

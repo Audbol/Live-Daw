@@ -37,12 +37,14 @@ use std::sync::Arc;
 // fader twice); ld_layers_add_to_user returns whether it had room.
 // ABI 16: the console model (ld_console_model_info, ld_layers_set_model, ld_wing_set_model).
 // ABI 17: ld_wing_set_black_finish ("wing-bk"); LdSpill kind 5 = a main's sources.
-// ABI 18: routing: StripParams loses direct_pre and direct_source is the
+// ABI 18: show items (ld_scene_item_*, ld_show_add_item, ld_show_add_snippet_scene,
+// ld_show_take_clips, ld_show_apply_library) and ld_rec_set_range (MODE A->B).
+// ABI 19: routing: StripParams loses direct_pre and direct_source is the
 // matrix DIRECT IN choice; the USR sources (UserSignalParams, UserPatchParams,
 // ld_engine_user_signals ...), the output patch (ld_engine_output_patch,
 // ld_engine_route_output_source, ld_engine_clear_output), strip sources
 // (ld_strip_source_input); kNumSources grows by the 56 USR sources.
-pub const LD_ABI_VERSION: i32 = 18;
+pub const LD_ABI_VERSION: i32 = 19;
 
 fn guard<T>(default: T, f: impl FnOnce() -> T) -> T {
     catch_unwind(AssertUnwindSafe(f)).unwrap_or(default)
@@ -157,7 +159,7 @@ pub struct LdLayoutInfo {
     pub off_dca_mon: i32,
     // ABI 16: the console model (ld_console_model_info, ld_layers_set_model, ld_wing_set_model)
     pub console_model_info: i32,
-    // ABI 18: routing (matrix DIRECT IN, USR sources)
+    // ABI 19: routing (matrix DIRECT IN, USR sources)
     pub off_direct_source: i32,
     pub user_signal: i32,
     pub off_user_signal_post: i32,

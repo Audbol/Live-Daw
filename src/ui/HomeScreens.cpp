@@ -1899,18 +1899,16 @@ public:
         };
 
         keySource = &make<ChoiceField> ("KEY SOURCE",
-                                        [this]
-                                        {
-                                            const int source = slot.scSource.load();
-                                            return source < 0 ? juce::String ("SELF") : "CH." + juce::String (source + 1);
-                                        },
+                                        [this] { return MixerEngine::keySourceName (slot.scSource.load()); },
                                         [this] (ChoiceField& f) { chooseKeySource (f); });
         keySource->arrowKey = true;
         keyFilter = &field ("KEY FILTER", keyFilterNames(), slot.scFilter);
         keyFilter->chevronKey = true;
         keyFilter->onKey = [this] { showPage (Page::Key); };
-        // Where the key is taken from the KEY SOURCE channel (shown while a channel keys the slot).
-        keyTap = &field ("KEY TAP", tapPointNames(), slot.scTap);
+        // Where the key is taken from the KEY SOURCE (shown while another strip
+        // keys the slot): an input channel's tap points, or for aux, buses,
+        // mains and matrices BUS, DYN, PFL, AFL, EQ, INS2 (`dynsc/tap`).
+        keyTap = &field ("KEY TAP", strip.getKind() == StripKind::Channel ? tapPointNames() : MixerEngine::outputKeyTapNames(), slot.scTap);
         // The key signal after the key filter on the solo bus.
         keySolo = &key ("KEY SOLO");
         keySolo->outlined = true;
@@ -2130,10 +2128,31 @@ private:
     int shownModel = -1, shownXo = -1, shownKeyFilter = -1, shownSource = -2, knobPage = 0;
     Page page = Page::Slot;
 
-    /** SELECT CHANNEL: SELF, or one of the channels by its colour, number and icon. */
+    /** SELECT CHANNEL: SELF, or one of the channels by its colour, number and
+        icon. Aux, buses, mains and matrices key from the buses, mains,
+        matrices and aux instead, in the WING's order (`dynsc/src`). */
     void chooseKeySource (ChoiceField& f)
     {
         std::vector<popups::ChannelTile> tiles;
+        if (strip.getKind() != StripKind::Channel)
+        {
+            static const char* const prefixes[] = { "", "A", "B", "M", "MX" };
+            for (int n = 0; n < MixerEngine::kNumOutputKeySources; ++n)
+            {
+                const int code = MixerEngine::outputKeySource (n);
+                const auto kind = static_cast<StripKind> (code / ld::kKeyStripBase);
+                const int index = code % ld::kKeyStripBase;
+                const auto& list = ctx.engine.getStrips (kind);
+                const Strip* s = juce::isPositiveAndBelow (index, (int) list.size()) ? list[(size_t) index].get() : nullptr;
+                popups::ChannelTile t;
+                t.number = prefixes[(int) kind] + juce::String (index + 1);
+                t.colour = s != nullptr ? stripDisplayColour (*s) : Colours::textDim;
+                tiles.push_back (std::move (t));
+            }
+            popups::chooseChannel (f, "SELECT KEY SOURCE", "SELF", std::move (tiles), MixerEngine::outputKeySourceIndex (slot.scSource.load()),
+                                   [this] (int i) { slot.scSource = i < 0 ? -1 : MixerEngine::outputKeySource (i); });
+            return;
+        }
         for (auto& channel : ctx.engine.getChannels())
         {
             const Strip* ch = channel.get();

@@ -136,7 +136,7 @@ pub unsafe extern "C" fn ld_engine_dca_monitor_paths(e: *const Engine, dca: i32)
     engine(e).map_or(0, |e| e.dca_monitor_paths(dca.max(0) as usize))
 }
 
-// ---- routing (ABI 18; livedaw-engine routing.rs, sources.rs) ----------------------------
+// ---- routing (ABI 19; livedaw-engine routing.rs, sources.rs) ----------------------------
 
 /// USR 1-24, the user signals: what each copies (`*count` entries; shared memory).
 #[no_mangle]

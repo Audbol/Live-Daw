@@ -301,13 +301,51 @@ public:
     static constexpr bool isOscSource (int input) noexcept { return oscChannelOf (input) >= 0; }
     /** "OSC 1", "OSC 2". */
     static juce::String oscSourceName (int n) { return "OSC " + juce::String (n + 1); }
+
+    /** DYNAMICS KEY SOURCE of aux, buses, mains and matrices (the WING's
+        `/bus/n/dynsc/src`): the n-th of BUS.1-16, MAIN.1-4, MTX.1-8, AUX.1-8,
+        as DynSlotParams::scSource (ld::kKeyStripBase * kind + index). */
+    static constexpr int kNumOutputKeySources = ld::kWingBuses + ld::kNumMains + ld::kNumMatrices + ld::kNumAux;
+    static constexpr int outputKeySource (int n) noexcept
+    {
+        if (n < ld::kWingBuses)
+            return ld::kKeyStripBase * ld::kBus + n;
+        n -= ld::kWingBuses;
+        if (n < ld::kNumMains)
+            return ld::kKeyStripBase * ld::kMain + n;
+        n -= ld::kNumMains;
+        if (n < ld::kNumMatrices)
+            return ld::kKeyStripBase * ld::kMatrix + n;
+        return ld::kKeyStripBase * ld::kAux + (n - ld::kNumMatrices);
+    }
+    /** The position of a KEY SOURCE in that list, or -1 (SELF, a channel). */
+    static constexpr int outputKeySourceIndex (int scSource) noexcept
+    {
+        for (int n = 0; n < kNumOutputKeySources; ++n)
+            if (outputKeySource (n) == scSource)
+                return n;
+        return -1;
+    }
+    /** A KEY SOURCE as the WING names it: "SELF", "CH.3", "BUS.12", "MAIN.1", "MTX.2", "AUX.4". */
+    static juce::String keySourceName (int scSource)
+    {
+        if (scSource < 0)
+            return "SELF";
+        if (scSource < ld::kKeyStripBase)
+            return "CH." + juce::String (scSource + 1);
+        static const char* const prefixes[] = { "CH", "AUX", "BUS", "MAIN", "MTX" };
+        const int kind = scSource / ld::kKeyStripBase;
+        return kind > 0 && kind < 5 ? juce::String (prefixes[kind]) + "." + juce::String (scSource % ld::kKeyStripBase + 1) : juce::String ("SELF");
+    }
+    /** The taps of an aux, bus, main or matrix key (`dynsc/tap`), by Sidecar's names. */
+    static juce::StringArray outputKeyTapNames() { return { "BUS", "DYN", "PRE FDR", "POST FDR", "EQ", "INS 2" }; }
     ld::OscParams* getOscillator (int n) const noexcept
     {
         return juce::isPositiveAndBelow (n, numOscillators) ? oscillators + n : nullptr;
     }
 
     //==============================================================================
-    // Routing beyond the strips' own patch (ABI 18; manual 2.6 and 5.4).
+    // Routing beyond the strips' own patch (ABI 19; manual 2.6 and 5.4).
 
     /** The strip sources: a bus, main or matrix as a channel's source (input
         stripSource (kind, number, side); a bus by its slot). -1 when the strip

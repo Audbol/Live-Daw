@@ -540,8 +540,13 @@ impl Recorder {
     }
 
     pub fn set_loop(&self, start: i64, end: i64, enabled: bool) {
+        self.set_range(LoopRange::new(start, end, enabled));
+    }
+
+    /// The loop or A->B range ([`LoopRange::a_to_b`]: playback stops at its end).
+    pub fn set_range(&self, range: LoopRange) {
         let mut c = self.control();
-        c.loop_range = LoopRange::new(start, end, enabled);
+        c.loop_range = range;
         self.shared.content().loop_range = c.loop_range;
         self.shared.content_version.fetch_add(1, AcqRel);
         self.ensure_threads(&mut c);

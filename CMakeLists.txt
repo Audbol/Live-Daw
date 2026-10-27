@@ -365,6 +365,7 @@ if(LIVEDAW_BUILD_TESTS)
         tests/RoutingTests.cpp
         tests/HoldToSwitchTests.cpp
         tests/SurfaceLayoutTests.cpp
+        tests/ConsoleRulesTests.cpp
         tests/SandboxTests.cpp
         tests/RealPluginTests.cpp
         src/sandbox/TestPlugins.cpp

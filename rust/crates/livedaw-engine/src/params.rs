@@ -448,7 +448,7 @@ pub struct StripParams {
     /// Matrices: DIRECT IN (manual 6.4; `/mtx/n/dir`), added to the matrix's sum.
     pub direct_on: AtomicBool,
     pub direct_invert: AtomicBool,
-    /// ABI 18: index into `routing::MATRIX_DIRECT_INPUTS` (OFF, AES, MON.PH,
+    /// ABI 19: index into `routing::MATRIX_DIRECT_INPUTS` (OFF, AES, MON.PH,
     /// MON.SPK, MON.BUS); before, an input channel's index.
     pub direct_source: AtomicI32,
     pub direct_level_db: AtomicF32,

@@ -154,6 +154,11 @@ Rust; audio devices, plugin hosting and the UI are C++ with JUCE.
   the half of the current block while same-wave readers take the other, so parallel
   strips never share memory being written. An idle (unpatched) source writes
   silence. Without keys from other channels stage 1 is one wave, as before.
+  Aux, bus, main and matrix DYNAMICS keyed from an aux, bus, main or matrix take
+  this block's tap when the source runs in an earlier stage of the block
+  (`keytap::stage_of`: aux, then the buses by their wave of this block's
+  `BusSchedule`, mains, matrices), else the previous block's; a bus's key never
+  changes the bus order.
 - **Sources** (`sources.rs`): every hardware input port (the first 576) and playback
   channel has a source with gain, mute, polarity, +48 V (stored only), colour, icon,
   name and a pairing with its neighbour (ports 1-2, 3-4, ...: STEREO, or MID/SIDE
@@ -262,7 +267,7 @@ views after a show load changes the console from Rust.
   engine controls are `#[repr(C)]` blocks of atomics owned by Rust. C++ sees the same
   memory as `std::atomic<float/bool/int32_t>` structs, and the UI writes them directly
   with no FFI call. Both sides describe the layout; `ld::verifyLayout()` compares the
-  two at startup and in the tests (ABI version 18), and the app refuses to run if they
+  two at startup and in the tests (ABI version 19), and the app refuses to run if they
   differ.
 - **FX slots.** The 16 slots are the WING's FX rack. Each holds one device from the
   console's FX table (`FX_MODELS`, generated like the processing models): the 26
@@ -531,7 +536,9 @@ Show
  ├─ GlobalSafe  DCAs, mute groups, FX slots, sections, console settings
  ├─ PartialScope  the scope PARTIAL LOAD / UPDATE last used
  └─ Scene[]     State (all sections) + recall scope + fade time + notes
-     └─ Snippet[]   State (each strip with its own sections) + scope + "fire with scene"
+     ├─ Snippet[]   State (each strip with its own sections) + scope + "fire with scene"
+     └─ Item        or, instead of a State: a file added to the show (a snippet, a clip's
+                    path, an FX preset + slot, a channel preset + strip)
 ```
 
 - `livedaw-session/src/scope.rs`: a `Scope` is sections + strips (or all) + DCA,
@@ -551,6 +558,9 @@ Show
   `<Scene>` and its snippets) and snippet files (`.lsnip`, a `<LiveDAWSnippet>` with
   one `<Snippet>`), written and read by the same functions as the show file's scene
   list. Importing inserts into the show and never touches the console.
+  `item_from_file` makes a show item of a snippet, clip or preset file (ADD ITEM TO
+  SHOW); `read_file` hands a scene or snippet to `Show::apply_scene` /
+  `apply_snippet` for the STARTUP folder, which loads without joining the show.
 
 - The console also keeps the console-level state of `livedaw-session/src/globals.rs`:
   SOLO MODE, the solo bus, MUTEGROUP/SIP OVERRIDE and SOURCE SOLO, talkback, the
@@ -964,7 +974,19 @@ dependencies beyond the other Sidecar crates.
   libwing's own clients when `LIBWING_TOOLS` is set (`tools/wing/libwing_tools.sh`),
   and `tools/wing/check_companion.py` checks the Companion module's paths.
 
-Limits: WING Edit and WING Copilot are untested. One output patch per strip (the WING
+- **WING Edit** (3.3.4, tested; `tests/wingedit.rs` replays what it does). It takes
+  the model from discovery, reads the whole console with `ROOT DATA?` (MIXER -> PC),
+  sets `/$syscfg/$cnsmdl` to "ModelRequest" once after connecting (a refused Native
+  set answers the value that stands, so it gets the model back) and follows `$cnscfg`
+  notifications. PC -> MIXER writes every value back in tree order, a model before
+  its parameters, so `set` switches models at once (the device is built later by
+  `collect`). Floats read on their nearest step (an engine default between steps would
+  read differently in WING Edit, which snaps). A slot whose model changed pushes all
+  the new model's parameters (`Shared::slot_models`), as WING Edit starts a model from
+  its own defaults. An output nobody patched reads OFF, so LCL n and A n (one port)
+  agree in the round trip.
+
+Limits: WING Copilot is untested. One output patch per strip (the WING
 can send a source to many outputs; extra ones are kept in the shadow store). Input
 groups other than AES50 A/B/C, CRD and OSC collapse onto the port with the same number
 (their source settings stay in the shadow store). A talkback channel other than
@@ -1072,7 +1094,7 @@ README's *Known limitations*; keep the three in step.
 - The MP3 encoder is basic: constant bit rate, no bit reservoir, a simple masking
   model.
 - MIDI and DAW remote control (MCU / HUI) have not been tried with real hardware;
-  the WING remote has not been tried with WING Edit or WING Copilot, and exported
+  the WING remote has been tried with WING Edit 3.3.4 but not WING Copilot, and exported
   snapshots have not been loaded into a console.
 - Plugins run inside the mixer process by default. Bad output and exceptions are
   contained, but a plugin that segfaults takes the app down (safe mode then recovers
@@ -1099,7 +1121,10 @@ README's *Known limitations*; keep the three in step.
   with DCA AS CC on. The WING remote binds those nodes to them only while the console
   is a COMPACT (`UserF::for_model`).
 - LIBRARY: scene and snippet files are Sidecar's XML (`.lsnap` / `.lsnip`), not the
-  WING's; ADD ITEM TO SHOW is disabled; 10 content sections instead of the
+  WING's; files added to a show (ADD ITEM TO SHOW, SAVE + ADD) are `SceneItem`s
+  of their scene (`livedaw-session/show.rs`): the snippet and presets are kept in
+  the show, a clip by its path (`take_pending_clips` after each recall; the C++
+  `Show` plays it on the USB player); 10 content sections instead of the
   console's 17 (CONTENTS keys sharing a section light together); the SCOPE window's
   SFC, PREFS and L / C / R tiles (surface and preferences in scenes) are disabled; the
   CLIP tab drives the USB player rather than a player of its own. SEND MIDI is a

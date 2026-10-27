@@ -554,7 +554,8 @@ namespace
             addAndMakeVisible (console);
 
             operation.addRow ("CONFIRM LIBRARY LOAD", OnKey::forSetting (ctx.settings, prefs::confirmLibraryLoad, true), 1.3f);
-            operation.addRow ("SHOW METER PAGE WHEN LOCKED", inertOnKey (ctx.settings, "meterPageWhenLocked"), 1.3f); // no screen lock: only kept
+            // While the surface is locked (hold HOME, manual 5.5 p. 43) the METERS screen shows.
+            operation.addRow ("SHOW METER PAGE WHEN LOCKED", OnKey::forSetting (ctx.settings, uiprefs::meterPageWhenLocked, false), 1.3f);
             // The status bar's title tile shows the active scene on every screen (MainDisplay reads it).
             operation.addRow ("ALWAYS SHOW ACTIVE SCENE", OnKey::forSetting (ctx.settings, uiprefs::alwaysShowScene, false), 1.3f);
             addAndMakeVisible (operation);
@@ -1018,22 +1019,21 @@ namespace
     public:
         explicit SurfaceTab (UiContext& c) : ctx (c)
         {
-            // The L/R meter beside the display: the monitor or a main (ui.mainMeter: 0 MONITOR, 1-4 MAIN n), and where it measures.
+            // The L/R meter beside the display (manual 5.5 p. 47): a main, a matrix, the
+            // phones, the speakers or the selected channel (mainmeter, ui.mainMeter), and where it measures.
             metering.addRow ("MAIN METER",
                              std::make_unique<DropdownField> ("SOURCE",
                                                               [this]
                                                               {
-                                                                  const int v = juce::jlimit (0, kNumMains, ctx.settings.getIntValue (uiprefs::mainMeter, uiprefs::mainMeterDefault));
-                                                                  return v == 0 ? juce::String ("MONITOR") : "MAIN." + juce::String (v);
+                                                                  const int v = ctx.settings.getIntValue (uiprefs::mainMeter, uiprefs::mainMeterDefault);
+                                                                  return mainmeter::names()[mainmeter::listIndex (v)];
                                                               },
                                                               [this] (DropdownField& f)
                                                               {
-                                                                  juce::StringArray items { "MONITOR" };
-                                                                  for (int i = 1; i <= kNumMains; ++i)
-                                                                      items.add ("MAIN." + juce::String (i));
                                                                   auto& settings = ctx.settings;
-                                                                  popups::chooseFrom (f, items, ctx.settings.getIntValue (uiprefs::mainMeter, uiprefs::mainMeterDefault),
-                                                                                      [&settings] (int i) { settings.setValue (uiprefs::mainMeter, i); });
+                                                                  popups::chooseFrom (f, mainmeter::names(),
+                                                                                      mainmeter::listIndex (ctx.settings.getIntValue (uiprefs::mainMeter, uiprefs::mainMeterDefault)),
+                                                                                      [&settings] (int i) { settings.setValue (uiprefs::mainMeter, mainmeter::settingAt (i)); });
                                                               }),
                              3.6f, true, false, kFieldRows);
             metering.addRow ("MAIN METER TAP",

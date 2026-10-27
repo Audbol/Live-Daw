@@ -22,7 +22,11 @@ with or endorsed by Behringer or Music Tribe; "WING" is their trademark.
     (gate, ducker, Even 88, Soul 9000, 160 VCA, LA leveler, 1176-style, Fair Kid,
     Bus comp, NSTR, limiters, de-esser...), with sidechain filter and source
     (KEY SOURCE: the strip itself or any input channel, taken at the KEY TAP: IN,
-    FILT, 3, 4, 5, PFL, AFL or POST), and a crossover band on the dynamics slot.
+    FILT, 3, 4, 5, PFL, AFL or POST), and a crossover band on the dynamics slot. Aux,
+    buses, mains and matrices key their DYNAMICS from the strip itself or any bus,
+    main, matrix or aux, as on the WING, taken at BUS, DYN, PRE FDR, POST FDR, EQ or
+    INS 2. A key from a strip that runs later in the block (a bus keyed by a main) is
+    one audio block late.
   - **EQ:** the 6-band WING EQ (8 bands on buses) or the analog models (SOUL, E88,
     E84, F110, PULSAR, MACH4, PIA on buses), with blend/mix.
   - **PRE INSERT and POST INSERT** use the 16 FX slots; the post insert can also join
@@ -227,7 +231,9 @@ like the finish. The COMPACT is black, so it always shows the black finish. It f
   scribble strip (one backlight colour on every strip; number,
   source ports or mono, icon, the name on an inverted bar), SELECT, SOLO, the meter
   block (DYN LED, a stereo six-segment input meter, GATE LED), MUTE and the fader with
-  its printed scale. SELECT on the selected strip again opens its HOME screen. MUTE
+  its printed scale. SELECT on the selected strip again opens its HOME screen. With
+  SETUP > SURFACE > SEL DBL CLICK **BUSFX** (the default), a bus, main or matrix opens
+  its INS 1 screen instead, or INS 2 when INS 1 has no FX. MUTE
   flashes while a mute group, a DCA mute or SIP mutes the strip; with MUTEGROUP/SIP
   OVERRIDE, pressing it unmutes the strip until that mute changes.
 - **SOF FLIP (Sends on Fader):** select a bus, main or matrix and the input faders set
@@ -235,9 +241,19 @@ like the finish. The COMPACT is black, so it always shows the black finish. It f
 - Surface keys act on a press; keys with a second function act on **hold** (half a
   second, or right-click): slot on/off, VIEW for CONFIG, the shift keys.
 - **Main display**, a 16:10 screen with the seven screen keys on its left (over its
-  full height) and, on its right, **CLR SOLO**, the main L/R meter (right-click: MONITOR
-  or MAIN 1-4), the knob for fine adjustments of the last touched control and the
-  blank key. **Screen only** (F10, Ctrl+Shift+F, the maximize key under the right-hand
+  full height) and, on its right, **CLR SOLO**, the main L/R meter, the knob for fine
+  adjustments of the last touched control and the blank key. The meter shows the MAIN
+  METER SOURCE of SETUP > SURFACE (or a right-click on it): MAIN 1-4, MTX 1-8, PHONES,
+  SPEAKERS or SEL CH (the selected strip). The blank key taps the tempo of a delay
+  open on EFFECTS or on an INS 1 / INS 2 screen: the time between two taps becomes its
+  TIME. Its LED blinks at that tempo while it can tap, and is lit where the screen
+  gives it another function.
+  - **Surface lock:** hold **HOME** to lock the surface and the touchscreen; the audio
+    and the remotes go on. Hold other keys beside the display together with HOME (or
+    right-click them just before) and they become the password: only HOME with the
+    same keys unlocks. Ctrl+L is HOME alone. With SETUP > GENERAL > SHOW METER PAGE
+    WHEN LOCKED, the METERS screen shows while locked. Restarting Sidecar unlocks.
+  - **Screen only** (F10, Ctrl+Shift+F, the maximize key under the right-hand
   column or a double-click on an empty part of the status bar; Esc returns) shows just
   the display with its keys and knobs, as large as the window allows; **F11** makes the
   window full screen. Both work together and are remembered.
@@ -255,7 +271,9 @@ like the finish. The COMPACT is black, so it always shows the black finish. It f
     and the wrench to drag the slots and the TAP point), the **OVERVIEW** (INPUT,
     FILTER, LEVEL, EQ and MAIN panels; INPUT has the source's +48V and GAIN; as on
     the console, hold the +48V key for 2 s to switch it: it fills up meanwhile, and a
-    tap does nothing),
+    tap does nothing; MAIN follows the SOLO MODE: SOLO BUS in LIVE, the mains in a row
+    with their PRE badges in STUDIO, and in SIP the **SOLO SAFE** locks on input and aux
+    channels: closed, SIP never mutes the channel),
     **ICON/COLOR**, **NAME**, **TAGS** (DCAs, mute groups, the talk tags TALK ON / TALK
     SOLO for both talk keys, A or B) and the **SAFE** key. As on a factory-initialized
     WING the faders start at -oo (buses 9-16 at 0 dB), the EQs off, and channels and
@@ -526,7 +544,15 @@ a WING with a WING-LIVE card, and edits them in a DAW-style editor.
     channel and INPUT SELECT switches to GLOBAL ALT, so the band's recording plays
     through the console; press again to go back to the live inputs;
   - **EDIT** (status bar, header) opens the editor. The knobs move the position and
-    the loop.
+    the range (START, END).
+  - **MODE** (next to the transport) steps PLAY, A->B and LOOP. PLAY plays on. A->B
+    plays from the range's start and stops at its end. LOOP plays the range again and
+    again. The mode is kept in the project.
+  - **SETTINGS** (status bar): **SHOW METERS** shows or hides the meters. **AUTO
+    INPUT SELECT** with **[STOP] / [PLAY] / [RECORD] INPUT** (KEEP, MAIN or ALT)
+    switches the global MAIN / ALT when the recorder stops, plays or records. The
+    channels follow it while INPUT SELECT is GLOBAL (VIRTUAL SOUNDCHECK sets it).
+    For a virtual soundcheck: STOP and RECORD on MAIN, PLAY on ALT.
   - **Record format** (the header's format key, or FILE > Record format in the
     editor): WAV 32-bit float (the default), WAV / AIFF / FLAC 24-bit, or MP3 320 /
     256 / 192 / 128 kbit/s (MP3 needs 32, 44.1 or 48 kHz). Takes get the format's
@@ -632,6 +658,21 @@ the USB key on the screen to choose another folder).
 - **Presets** are files: an FX slot's device and settings (`.lfx`, loads into any slot)
   and a strip's settings with a scope (`.lchn`, loads onto another strip of the same
   family; UPDATE SCOPE changes what it loads).
+- **Files in a show.** As on the WING, a scene can also be a file: a snippet, an audio
+  clip, an FX preset or a channel preset. **ADD ITEM TO SHOW** (SHOW tab, or **ADD**
+  in the status bar) adds the file selected at INT or USB after the selected scene.
+  An FX preset loads into the slot chosen on the FX tab, a channel preset onto the
+  selected strip. A scene file comes in as a scene. **SAVE + ADD** on SNIP, FX and
+  CHAN saves and adds in one go (on SNAP, SAVE already adds the scene). Recalling the
+  scene loads the file: the snippet, the preset, or the clip on the USB player (patch
+  the USB PLAYER sources to hear it). The list shows the type (SNIP, WAV, FX, CHAN);
+  a renamed one also shows its file's name. The show keeps the snippet and presets;
+  a clip stays where it is.
+- **STARTUP.** A show, scene and snippet whose names start with `STARTUP` (for
+  example `STARTUP_gig.lshow`, `STARTUP.lsnip`) in `Documents/Sidecar/Library/STARTUP`
+  load when Sidecar starts: the show first, then the scene and the snippet. WING
+  `.show` and `.snap` files work too. Hold SHIFT while Sidecar starts (the WING:
+  LIBRARY) or start it with `--no-startup` to skip them.
 - Recalling a scene or snippet never creates or destroys channels or plugins, so it
   can't cause a dropout. Built-in FX devices and their settings are recalled.
 - Shows from earlier Sidecar versions are converted when they load: channels stay
@@ -777,16 +818,36 @@ and open-source projects (see below), and it is **experimental**.
   kit's README for the steps.
 - **What is tested:** libwing's own clients (`wingprop`, `wingmon`, `wingdrive`'s
   test battery and model capture, its OSC client), and every OSC path the Bitfocus
-  Companion WING module builds that exists in the 3.1 tree. Testers use **WING Edit**
-  and **Mixing Station** with it; **WING Copilot has not been tried**, so it may not work.
+  Companion WING module builds that exists in the 3.1 tree. Testers use **Mixing
+  Station** with it; **WING Copilot has not been tried**, so it may not work.
+- **WING Edit 3.3.4** (Behringer's desktop editor) was tested against Sidecar on both
+  console models. What works: discovery (SETUP > CONNECT > RESCAN, or MANUAL IP
+  ADDRESS), CONNECT, SYNCHRONIZE in both directions (MIXER -> PC reads the whole
+  console; PC -> MIXER writes it back and changes nothing that was read), the ACTIVE
+  WING MODEL (`wing-fullsize` / `wing-compact`, also when CONSOLE MODEL is switched
+  while connected), and live control both ways: faders, mutes, names, colours and
+  icons (with LINK CUSTOMIZATION TO SOURCE on, the channel shows its source's), the
+  GATE / EQ / DYNAMICS models and their parameters, the FX rack (models in the
+  premium slots 1-8 and standard slots 9-16, parameters, FX MIX) and the inserts (INS
+  1 / INS 2 take an FX slot, and the engine runs it there). An FX slot hosting a
+  plugin shows as an **EXTERNAL** effect; choosing another model for it in WING Edit
+  is refused and WING Edit is told the slot is still EXT (load and remove plugins on
+  Sidecar's EFFECTS screen). Limits: WING Edit 3.3.4 knows a few hundred parameters
+  of firmware newer than 3.1 (a monitor level, StageConnect source settings, a surface
+  block); Sidecar ignores them, as a 3.1 console would. LOCAL OUT n and AES50 A n are
+  one port in Sidecar, so a WING Edit file made on a real WING that patches them
+  differently ends up with A n's patch after PC -> MIXER.
 - **What maps:** every parameter of the WING 3.1 tree but one answers (68,555 of
-  68,556, counting every model's parameters). 61,109 of them (89.1 %) drive the
-  engine, 73 are Sidecar's SETUP settings, and the 7,373 Sidecar has no equivalent
+  68,556, counting every model's parameters). 62,329 of them (90.9 %) drive the
+  engine, 85 are Sidecar's SETUP settings, and the 6,141 Sidecar has no equivalent
   for answer what a factory-initialized WING answers (see below). Driving the engine: channels, aux, buses, mains
   and matrices (name, colour, icon, input and ALT patch, trim, filters, gate, EQ and
   dynamics models with all their parameters, inserts, fader, mute, pan, width, sends,
-  main sends, solo, TAP WIDTH and TAP EQ), DCAs (with their SOLO BUS), mute groups, the FX rack, output
-  routing (LOCAL OUT is A 1-8, as on ROUTING), the USB recorder's RECORDER ports
+  main sends, solo, TAP WIDTH and TAP EQ, every bus's sends to the other buses, the
+  matrices' `dir/in`), DCAs (with their SOLO BUS), mute groups, the FX rack, output
+  routing (LOCAL OUT is A 1-8, as on ROUTING; any input group's source too), the
+  USER SIGNAL group (`/io/in/USR/1-56`: the source settings and `user/grp`, `in`,
+  `lr`, `tap`), the USB recorder's RECORDER ports
   (`/io/out/REC/1-4`: any bus, main, matrix or source), the sources of the LOCAL IN
   (the same ports as AES50 A), AES50 A/B/C, WING-LIVE card and USB player (`PLAY`)
   groups (name, colour, icon, gain, mute, polarity, +48V, mode, mute-group tags),
@@ -811,15 +872,16 @@ and open-source projects (see below), and it is **experimental**.
   are the strips' SAFE keys, `dca`, `mute`, `fx` the GLOBAL safes; in the console's
   format, a `+` or a space per strip, as `+ +` for 1 and 3; lists such as `1,3,5-8`
   are taken too). SETUP's options are Sidecar's settings, both ways: METERING's taps
-  (`/cfg/mtr/mtrpage`, `mtrsfc`: one setting per strip type for both), MAIN METER and
-  MAIN METER TAP,
+  (`/cfg/mtr/mtrpage`, `mtrsfc`: one setting per strip type for both), MAIN METER
+  (`/cfg/mtr/mainmtr`: every source) and MAIN METER TAP,
   the GENERAL, SURFACE and SOLO SYSTEM options (`/$ctl/cfg`, `/$ctl/$globals`:
   confirm load, wheel, touch fader select and resolution, fader speed, SOF button,
   frame and mode, autoselect, user layer link, DCA spill, solo exclusive and
-  follows, the brightness tiles, the time and date format...), MIDI REMOTE CONTROL
+  follows, the brightness tiles, the time and date format, SHOW METER PAGE WHEN
+  LOCKED...), the surface lock's string (`/$ctl/$stat/cnslock`, read only), MIDI REMOTE CONTROL
   (`/$ctl/midi`) and DAW (`/$ctl/daw`: enable, connection, emulation, upper CC,
-  wheel, preset) and the rows of features Sidecar doesn't have (TAP TEMPO FLASH, SHOW
-  METER PAGE WHEN LOCKED, MOUSE DISABLES TOUCH, SEND PAGE ACTIVATES SOLO, the OSC and
+  wheel, preset) and the rows of features Sidecar doesn't have (TAP TEMPO FLASH,
+  MOUSE DISABLES TOUCH, SEND PAGE ACTIVATES SOLO, the OSC and
   TCP remote locks), which are only kept. `/$globals/clkrate` is the audio device's rate. Not mapped:
   DAW CONFIGURATION (`/$ctl/daw/config`), whose 3.1 choices (CC, MSTR) can't show
   Sidecar's MCU with extenders. The fader sections' layers (`/$ctl/layer/L`, `C`, `R`) and the custom

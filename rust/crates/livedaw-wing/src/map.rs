@@ -22,6 +22,7 @@ use livedaw_dsp::wing::fx::allowed_in_slot;
 use livedaw_dsp::wing::{model_index, ModelSpec, ParamKind, DYN_MODELS, EQ_MODELS_BUS, EQ_MODELS_CH, FILTER_TOOLS, FX_MODELS};
 use livedaw_engine::analyser::{listen_mode, rta_view};
 use livedaw_engine::atomic::AtomicF32;
+use livedaw_engine::keytap::KeySource;
 use livedaw_engine::monitor::{MonitorDspParams, MONITOR_EQ_BANDS};
 use livedaw_engine::params::{
     DynSlotParams, EngineControls, InsertParams, MonitorSourceParams, StripParams, FX_EXT, FX_NONE, NUM_DCAS, NUM_FX,
@@ -970,7 +971,7 @@ fn strip_field(kind: StripKind, n: u16, rest: &[&str]) -> Option<SF> {
                     "f" => ScF::F,
                     "q" => ScF::Q,
                     "src" => ScF::Src,
-                    "tap" if ch => ScF::Tap,
+                    "tap" => ScF::Tap, // aux, buses, mains, matrices: BUS .. INS2 (keytap.rs)
                     _ => return None,
                 },
             )
@@ -2001,7 +2002,13 @@ impl<'a> Console<'a> {
             }
         };
         if let Some(v) = mapped {
-            return Some(v);
+            // On the parameter's nearest step, as the console reports it (and
+            // WING Edit shows it): an engine default between two steps (a HALL
+            // decay of 2.00 s) would otherwise read 2.00 here and 2.03 there.
+            return Some(match self.binding(node) {
+                Binding::Strip(_, _, SF::Dly) => v,
+                _ => value::quantise(def, &v),
+            });
         }
         if let Some(v) = self.shadow_key(node).and_then(|k| self.state.shadow_get(k)) {
             return Some(v);
@@ -2274,7 +2281,7 @@ impl<'a> Console<'a> {
             }
             Binding::Out(block, n, number) => {
                 let port = port::output_port(block as usize, n as i32);
-                let (g, k) = self.out_pair(row, port)?;
+                let (g, k) = self.out_pair(row, port);
                 if number {
                     Value::Int(k)
                 } else {
@@ -2461,13 +2468,11 @@ impl<'a> Console<'a> {
                     ScF::Type => item(def, d.sc_filter.load(Relaxed)),
                     ScF::F => f(&d.sc_freq),
                     ScF::Q => f(&d.sc_q),
+                    // Input channels: SELF, CH.n; the others SELF, BUS.n, MAIN.n,
+                    // MTX.n, AUX.n (a source the list lacks reads as SELF).
                     ScF::Src => {
-                        let src = d.sc_source.load(Relaxed);
-                        if src >= 0 && kind == StripKind::Channel {
-                            value::coerce(def, &Value::Str(format!("CH.{}", src + 1))).unwrap_or(Value::str("SELF"))
-                        } else {
-                            Value::str("SELF")
-                        }
+                        let name = KeySource::from_code(d.sc_source.load(Relaxed)).wing_name();
+                        value::coerce(def, &Value::Str(name)).unwrap_or(Value::str("SELF"))
                     }
                     ScF::Tap => item(def, d.sc_tap.load(Relaxed)),
                 }
@@ -3145,11 +3150,8 @@ impl<'a> Console<'a> {
             Binding::Info(_) => return Err(SetError::ReadOnly),
             Binding::Out(block, n, number) => {
                 let port = port::output_port(block as usize, n as i32);
-                let (cur_g, cur_n) = self
-                    .out_pair(row, port)
-                    .map(|(g, k)| (g.to_owned(), k))
-                    .or_else(|| self.shadow_pair(row, "grp", "in"))
-                    .unwrap_or(("OFF".into(), 1));
+                let (cur_g, cur_n) = self.out_pair(row, port);
+                let (cur_g, cur_n) = (cur_g.to_owned(), cur_n);
                 let (g, k) = if number { (cur_g, v.as_i32().unwrap_or(1)) } else { (str_of(v), cur_n) };
                 self.route_output(port, &g, k);
                 // Remember the pair as set: the number of an unrouted output, and
@@ -3244,10 +3246,12 @@ impl<'a> Console<'a> {
     /// What feeds output `port` as its `/io/out/../grp`, `in` (`row`, either)
     /// show it: a source as set while it names the routed one (LCL 5 is A 5
     /// here, SC 7 is port 7), else what Sidecar routes there; a source
-    /// Sidecar can't route as set; else OFF with the number set. None:
-    /// nothing set and nothing routed.
-    fn out_pair(&self, row: u16, port: i32) -> Option<(&'static str, i32)> {
-        Some(match (self.output_source(port), self.shadow_pair(row, "grp", "in")) {
+    /// Sidecar can't route as set; else OFF with the number set. Nothing set
+    /// and nothing routed: OFF, not the factory WING's patch (LCL 3 BUS 5 and
+    /// A 3 OFF are the same port here, and the engine doesn't route it); WING
+    /// Edit writes both back on PC -> MIXER, so they must agree.
+    fn out_pair(&self, row: u16, port: i32) -> (&'static str, i32) {
+        match (self.output_source(port), self.shadow_pair(row, "grp", "in")) {
             (Some(gk), Some((sg, sk)))
                 if unroutable_group(row, &sg).is_some()
                     && port::wing_to_source(&sg, sk).is_some_and(|s| s >= 0 && port::wing_to_source(gk.0, gk.1) == Some(s)) =>
@@ -3256,8 +3260,8 @@ impl<'a> Console<'a> {
             }
             (Some(gk), _) => gk,
             (None, Some((sg, sk))) => (unroutable_group(row, &sg).unwrap_or("OFF"), sk),
-            (None, None) => return None,
-        })
+            (None, None) => ("OFF", 1),
+        }
     }
 
     /// What user patch `n` (0-based) copies as the WING's (group, number):
@@ -3438,15 +3442,17 @@ impl<'a> Console<'a> {
                     ScF::F => set_f(&d.sc_freq, v),
                     ScF::Q => set_f(&d.sc_q, v),
                     ScF::Src => {
-                        let text = str_of(v);
-                        if text == "SELF" {
-                            d.sc_source.store(-1, Relaxed);
-                        } else if let (StripKind::Channel, Some(k)) =
-                            (kind, text.strip_prefix("CH.").and_then(|k| k.parse::<i32>().ok()))
-                        {
-                            d.sc_source.store(k - 1, Relaxed);
-                        } else {
-                            return Ok(false); // keyed from a bus/main/matrix: not in the engine
+                        // Input channels key from channels, the others from
+                        // buses, mains, matrices and aux (keytap.rs).
+                        match KeySource::from_wing_name(&str_of(v)) {
+                            Some(src @ KeySource::SelfKey) => d.sc_source.store(src.code(), Relaxed),
+                            Some(src @ KeySource::Channel(_)) if kind == StripKind::Channel => {
+                                d.sc_source.store(src.code(), Relaxed)
+                            }
+                            Some(src @ KeySource::Strip(..)) if kind != StripKind::Channel => {
+                                d.sc_source.store(src.code(), Relaxed)
+                            }
+                            _ => return Ok(false),
                         }
                     }
                     ScF::Tap => set_item(&d.sc_tap, def, v),
@@ -3786,6 +3792,11 @@ mod tests {
             ("/ch/3/postins/mode", Value::str("AUTO_X")),
             ("/ch/3/gatesc/tap", Value::str("POST")),
             ("/ch/3/dynsc/tap", Value::str("PFL")),
+            ("/ch/3/dynsc/src", Value::str("CH.5")),
+            ("/bus/4/dynsc/src", Value::str("MAIN.2")),
+            ("/bus/4/dynsc/tap", Value::str("EQ")),
+            ("/aux/2/dynsc/src", Value::str("AUX.3")),
+            ("/mtx/2/dynsc/src", Value::str("BUS.16")),
             ("/ch/3/main/2/on", Value::Int(1)),
             ("/ch/3/main/2/lvl", Value::Float(-3.0)),
             ("/ch/3/send/5/on", Value::Int(1)),
@@ -3796,6 +3807,7 @@ mod tests {
             ("/ch/3/tags", Value::str("#D1,#M3,mytag")),
             ("/aux/2/fdr", Value::Float(1.5)),
             ("/aux/2/dyn/mdl", Value::str("COMP")),
+            ("/aux/2/solosafe", Value::Int(1)),
             ("/bus/4/fdr", Value::Float(-10.0)),
             ("/bus/4/busmono", Value::Int(1)),
             ("/bus/4/eq/mdl", Value::str("PIA")),
@@ -3832,6 +3844,15 @@ mod tests {
         assert_eq!(ch3.name(), "Kick");
         // KEY TAP (TAP_POINTS order).
         assert_eq!((ch3.params.gate.sc_tap.load(Relaxed), ch3.params.dynamics.sc_tap.load(Relaxed)), (7, 5));
+        // KEY SOURCE: channels from channels, the others from buses, mains, matrices and aux.
+        assert_eq!(ch3.params.dynamics.sc_source.load(Relaxed), 4);
+        let bus4 = c.strip(StripKind::Bus, 4).unwrap();
+        assert_eq!(KeySource::from_code(bus4.params.dynamics.sc_source.load(Relaxed)), KeySource::Strip(StripKind::Main, 1));
+        assert_eq!(bus4.params.dynamics.sc_tap.load(Relaxed), 4);
+        assert!(c.strip(StripKind::Aux, 2).unwrap().params.solo_safe.load(Relaxed), "SOLO SAFE on an aux");
+        let mtx2 = c.strip(StripKind::Matrix, 2).unwrap();
+        assert_eq!(KeySource::from_code(mtx2.params.dynamics.sc_source.load(Relaxed)), KeySource::Strip(StripKind::Bus, 15));
+        assert!(!c.set(node(&c, "/bus/4/dynsc/src"), &Value::str("CH.1")).is_ok_and(|v| v == Value::str("CH.1")));
         assert!(ch3.sends.find(4).unwrap().pan_reversed.load(Relaxed));
         assert_eq!(e.controls.main_link.load(Relaxed), 2);
         assert_eq!(e.dca_name(2), "Drums");
@@ -4296,7 +4317,9 @@ mod tests {
         assert!(table.get(index).unwrap().mute.load(Relaxed));
         assert_eq!(table.name(index), "Noise");
         assert_eq!(c.get(node(&c, "/io/in/OSC/2/osc/mode")), Some(Value::str("PINK")));
-        assert_eq!(c.get(node(&c, "/io/in/OSC/1/osc/f")), Some(Value::Float(1000.0)));
+        // On its nearest step, as a factory-set WING answers (999.992).
+        let f = c.get(node(&c, "/io/in/OSC/1/osc/f")).and_then(|v| v.as_f32()).unwrap();
+        assert!((f - 999.992).abs() < 0.001, "{f}");
         // MODE pairs OSC 1 and 2.
         c.set(node(&c, "/io/in/OSC/1/mode"), &Value::str("ST")).unwrap();
         assert_eq!(table.get(sources::OSC_SOURCE_INDEX).unwrap().mode.load(Relaxed), source_mode::STEREO);
@@ -4923,9 +4946,9 @@ mod tests {
         assert_eq!(cov.total, 68556, "{}", cov.report());
         // Everything answers but DAW CONFIGURATION (see `unbound_feature`).
         assert_eq!(cov.mapped, 68555, "{}", cov.report());
-        // 77 settings: the COMPACT's mfdr, cscmode, autosel_CMPCT, mfdrkeep, mainspill,
-        // mtxspill and dcacc among them.
-        assert_eq!((cov.settings, cov.stored), (77, 6185), "{}", cov.report());
+        // 85 settings: the COMPACT's mfdr, cscmode, autosel_CMPCT, mfdrkeep, mainspill,
+        // mtxspill and dcacc and the surface lock (cnslock) among them.
+        assert_eq!((cov.settings, cov.stored), (85, 6141), "{}", cov.report());
         for (g, (m, t)) in &cov.by_group {
             assert!(m == t || g == "/$ctl/daw", "{g}: {m} of {t}");
         }
@@ -4934,7 +4957,7 @@ mod tests {
         // (The COMPACT's key sets U4, MM and D1-D4 count here: the full-size console answers their factory values.)
         // (The routing: every bus to every other bus, USR 1-56 and their
         // user/..., the matrices' dir/in.)
-        assert_eq!(cov.mapped - cov.settings - cov.stored, 62293);
+        assert_eq!(cov.mapped - cov.settings - cov.stored, 62329);
         let b = bindings();
         let row = |p: &str| match schema().resolve(p, &NoModels) {
             Some(Node::Row(r)) => r as usize,
@@ -5039,7 +5062,8 @@ mod tests {
         set("/$ctl/cfg/lights/meters", Value::Int(70)).unwrap();
         set("/$ctl/$globals/timefmt", Value::str("12H")).unwrap();
         set("/cfg/mtr/mainmtr", Value::str("MAIN.3")).unwrap();
-        assert!(matches!(set("/cfg/mtr/mainmtr", Value::str("MTX.1")), Err(SetError::Unsupported(_))));
+        // Every MAIN METER SOURCE: the mains, matrices, phones, speakers and the selected channel.
+        set("/cfg/mtr/mainmtr", Value::str("MTX.2")).unwrap();
         // The host's own value doesn't undo a change it hasn't taken.
         st.set_host_setting("setup.meterTapPre.2", "0");
         assert_eq!(get_text(&c, "/cfg/mtr/mtrpage/main"), "PRE");
@@ -5056,12 +5080,16 @@ mod tests {
                 ("midi.enscenes", "2"),
                 ("setup.brightness.meters", "70"),
                 ("ui.clock24", "0"),
-                ("ui.mainMeter", "3"),
+                ("ui.mainMeter", "6"),
             ]
         );
         st.set_host_setting("setup.meterTapPre.2", "0");
         assert_eq!(get_text(&c, "/cfg/mtr/mtrpage/main"), "POST");
         assert!(crate::host::keys().contains(&"daw.preset"));
+        for (item, setting) in [("MON.PH", "13"), ("MON.SPK", "0"), ("SEL_CH", "14"), ("MTX.8", "12")] {
+            st.set_host_setting("ui.mainMeter", setting);
+            assert_eq!(get_text(&c, "/cfg/mtr/mainmtr"), item);
+        }
 
         // MAIN METER TAP is a setting (AUTO, as on the console, until set).
         assert_eq!(get_text(&c, "/cfg/mtr/mainpos"), "AUTO");
@@ -5072,9 +5100,17 @@ mod tests {
         assert_eq!(set("/$ctl/$globals/tapflash", Value::str("8X")), Ok(Value::str("8X")));
         assert_eq!(st.take_host_setting(), Some(("setup.inert.tapTempoFlash", "1".to_owned())));
         assert_eq!(get_text(&c, "/$ctl/$globals/lockmtr"), "0");
+        // The surface lock: SHOW METER PAGE WHEN LOCKED and the read-only lock string.
+        st.set_host_setting("ui.meterPageWhenLocked", "1");
+        assert_eq!(get_text(&c, "/$ctl/$globals/lockmtr"), "1");
+        assert_eq!(get_text(&c, "/$ctl/$stat/cnslock"), "");
+        st.set_host_setting("ui.surfaceLock", "1001001000000000000");
+        assert_eq!(get_text(&c, "/$ctl/$stat/cnslock"), "1001001000000000000");
+        assert_eq!(set("/$ctl/$stat/cnslock", Value::str("")), Err(SetError::ReadOnly));
+        st.set_host_setting("ui.meterPageWhenLocked", "0");
         st.set_host_setting("setup.inert.mouseDisablesTouch", "1");
         assert_eq!(get_text(&c, "/$ctl/$globals/mousetchdis"), "1");
-        for path in ["/$ctl/$globals/lockmtr", "/$ctl/cfg/sfdr2solo", "/$ctl/osc/ronly", "/$syscfg/tcplock"] {
+        for path in ["/$ctl/cfg/sfdr2solo", "/$ctl/osc/ronly", "/$syscfg/tcplock"] {
             assert!(set(path, Value::Int(1)).is_ok(), "{path}");
             assert!(st.take_host_setting().is_some_and(|(key, value)| key.starts_with("setup.inert.") && value == "1"), "{path}");
         }
