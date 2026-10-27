@@ -1,4 +1,6 @@
+#include "engine/MixerEngine.h"
 #include "engine/Models.h"
+#include "ui/MeterBallistics.h"
 #include "ui/Faceplate.h"
 #include "ui/FaceplateDesign.h"
 #include "ui/LookAndFeel.h"
@@ -384,6 +386,77 @@ public:
                     expectEquals (wrong, 0, juce::String (token) + " page " + juce::String (page + 1) + ": a partial repaint differs from a full one");
                 }
                 expect (live > 0, juce::String (token) + ": no meter reads a live readout");
+            }
+        }
+
+        beginTest ("C5-COMBINATOR's page shows the engine's live readouts (a tone through FX 10 on channel 1)");
+        {
+            // The page's path end to end: the engine's device, ld_fx_readouts, the panel. With
+            // SIDECAR_FX_METER_SHOT set (a .png path), the page is saved with the signal running.
+            MixerEngine engine (0);
+            engine.setNumChannels (1);
+            constexpr int kBlock = 256;
+            engine.prepareOffline (48000.0, kBlock, 1, 2);
+            auto& fx = engine.getFx();
+            const auto& spec = models::model (models::Fx, models::findModel (models::Fx, "C5-CMB"));
+            expect (fx.setModel (9, spec.index));
+            auto& v = fx.params (9).values;
+            v[spec.find ("thr")] = -30.0f;
+            v[spec.find ("sbcon")] = 0.0f;
+            v[spec.find ("gain_3")] = 3.0f;
+            auto& ch = *engine.getChannels()[0];
+            ch.params.inputLeft = 0;
+            ch.params.inputRight = 0;
+            ch.params.faderDb = 0.0f;
+            ch.params.preInsert.on = true;
+            ch.params.preInsert.fx = 9;
+            std::vector<float> in (kBlock), out0 (kBlock), out1 (kBlock);
+            for (int b = 0; b < 48000 / kBlock; ++b)
+            {
+                for (int i = 0; i < kBlock; ++i)
+                {
+                    const double t = (double) (b * kBlock + i) / 48000.0;
+                    in[(size_t) i] = (float) (0.4 * std::sin (juce::MathConstants<double>::twoPi * 1000.0 * t)
+                                              + 0.2 * std::sin (juce::MathConstants<double>::twoPi * 90.0 * t));
+                }
+                const float* ins[] = { in.data() };
+                float* outs[] = { out0.data(), out1.data() };
+                engine.processBlock (ins, 1, outs, 2, kBlock);
+            }
+            std::vector<float> r ((size_t) ui::fp::rd::kCount);
+            expectEquals (fx.getReadouts (9, r.data(), (int) r.size()), ui::fp::rd::kCount);
+            expect (r[ui::fp::rd::InL] > 0.4f, "the slot's input level: " + juce::String (r[ui::fp::rd::InL]));
+            expect (r[ui::fp::rd::Dev + 2] < -3.0f, "band 3 compresses: " + juce::String (r[ui::fp::rd::Dev + 2]));
+            expect (r[ui::fp::rd::Dev + 1] > -0.5f, "band 2 doesn't");
+            expect (r[ui::fp::rd::Dev + 10 + 16] > 0.1f, "the spectrum shows 1 kHz");
+
+            const auto shot = juce::SystemStats::getEnvironmentVariable ("SIDECAR_FX_METER_SHOT", {});
+            if (shot.isNotEmpty())
+            {
+                ui::ConsoleLookAndFeel lf;
+                juce::LookAndFeel::setDefaultLookAndFeel (&lf);
+                std::vector<std::atomic<float>> values (spec.params.size());
+                for (size_t i = 0; i < spec.params.size(); ++i)
+                    values[i] = v[i].load();
+                juce::Image image (juce::Image::RGB, 1280, 640, true);
+                {
+                    juce::Graphics g (image);
+                    g.fillAll (juce::Colour (0xff101010));
+                    const float k = 1280.0f / ui::fp::kFrameW;
+                    g.addTransform (juce::AffineTransform::scale (k).translated (0.0f, (640.0f - ui::fp::kFrameH * k) * 0.5f));
+                    ui::fp::PaintContext ctx;
+                    ctx.spec = &spec;
+                    ctx.value = [&] (int i) { return values[(size_t) i].load(); };
+                    ctx.page = juce::roundToInt (values[(size_t) spec.find ("bandsel")].load() - spec.params[(size_t) spec.find ("bandsel")].min);
+                    ctx.readout = [&] (int i) { return r[(size_t) i]; };
+                    ctx.levelDb = [&] (int i) { return dsp::gainToDb (std::abs (r[(size_t) i])); };
+                    ui::fp::paintDesign (g, *ui::fp::findDesign (models::Fx, "C5-CMB"), ctx);
+                }
+                juce::File file (shot);
+                file.deleteFile();
+                juce::FileOutputStream os (file);
+                juce::PNGImageFormat().writeImageToStream (image, os);
+                juce::LookAndFeel::setDefaultLookAndFeel (nullptr);
             }
         }
     }
