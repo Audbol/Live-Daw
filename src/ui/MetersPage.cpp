@@ -85,7 +85,7 @@ public:
     void resized() override
     {
         const auto w = window();
-        closeKey.setBounds (w.withHeight (titleH()).removeFromRight (juce::roundToInt (page.px (128.0f))).reduced (juce::roundToInt (page.px (8.0f))));
+        closeKey.setBounds (w.withHeight (titleH()).removeFromRight (juce::roundToInt (page.px (144.0f))).withTrimmedRight (juce::roundToInt (page.px (8.0f))).reduced (juce::roundToInt (page.px (8.0f))));
         // [3.1] keys 128 x 48 at 200 px into the window, 56 apart from 12 down.
         for (int i = 0; i < keys.size(); ++i)
             keys[i]->setBounds (juce::Rectangle<float> ((float) w.getX() + page.px (200.0f), (float) body().getY() + page.py (12.0f + 56.0f * (float) i),

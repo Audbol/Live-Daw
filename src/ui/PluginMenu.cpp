@@ -251,7 +251,7 @@ void showFxDeviceMenu (UiContext& ctx, int slot, juce::Component* target, std::f
         if (model == ld::kFxNone)
             drawIcon (g, Icon::Cancel, r.withSizeKeepingCentre (r.getHeight() * 0.67f, r.getHeight() * 0.67f), Colours::caption);
         else
-            Faceplate::paintThumbnail (g, r, models::Fx, model, model == ld::kFxExt ? juce::String ("PLUGIN") : juce::String());
+            Faceplate::paintThumbnail (g, r, models::Fx, model, model == ld::kFxExt ? juce::String ("EXTERNAL") : juce::String()); // [Fig. 169]
     };
     juce::Component::SafePointer<juce::Component> safeTarget (target);
     popups::chooseTabbedTile (*target, *over, std::move (common), std::move (tabs), shown, current, picture,

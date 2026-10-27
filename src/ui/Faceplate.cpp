@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cmath>
 #include <map>
+#include <tuple>
 
 namespace livedaw::ui
 {
@@ -298,6 +299,7 @@ void Faceplate::bind (models::Table t, int model, std::atomic<float>* v, std::fu
         style.title = fit (spec->name);
     shown.assign (spec->params.size(), std::numeric_limits<float>::quiet_NaN());
     lastTouched = -1;
+    page = juce::jmax (0, pageFromParameter());
     layoutControls();
     repaint();
 }
@@ -309,6 +311,16 @@ int Faceplate::getNumPages() const noexcept
         for (const auto& e : design->elements)
             n = juce::jmax (n, e.page + 1, e.type == fp::Type::Key && e.look == fp::Look::TabKey ? e.choice + 1 : 0);
     return n;
+}
+
+int Faceplate::pageFromParameter() const
+{
+    if (design == nullptr || spec == nullptr || values == nullptr)
+        return -1;
+    for (const auto& e : design->elements)
+        if (e.type == fp::Type::Key && e.look == fp::Look::TabKey && e.param >= 0 && e.param < (int) spec->params.size())
+            return juce::jlimit (0, getNumPages() - 1, juce::roundToInt (values[e.param].load() - spec->params[(size_t) e.param].min));
+    return -1;
 }
 
 void Faceplate::setPage (int p)
@@ -364,6 +376,13 @@ void Faceplate::timerCallback()
             changed = true;
         }
     }
+    // A tab bound to a parameter follows it when it changes elsewhere.
+    if (changed)
+        if (const int p = pageFromParameter(); p >= 0 && p != page)
+        {
+            page = p;
+            layoutControls();
+        }
     const float m = meterFn ? meterFn() : 0.0f;
     if (std::abs (m - shownMeter) > 0.1f)
     {
@@ -604,9 +623,71 @@ static void paintPanel (juce::Graphics& g, juce::Rectangle<float> b, const Facep
     }
 }
 
+namespace
+{
+    /** The EXTERNAL EFFECT page in small (Fig. 169): SEND, FX MODE, RETURN. */
+    void paintExternalThumbnail (juce::Graphics& g, juce::Rectangle<float> r)
+    {
+        // The page's panel (1096 x 336) fitted into the tile.
+        const float k = juce::jmin (r.getWidth() / 1096.0f, r.getHeight() / 336.0f);
+        const auto at = [&r, k] (float x, float y, float w, float h)
+        { return juce::Rectangle<float> (r.getCentreX() + (x - 548.0f) * k, r.getCentreY() + (y - 168.0f) * k, w * k, h * k); };
+        g.setColour (juce::Colour (0xff2c2c2c));
+        g.fillRect (at (0, 0, 1096, 336));
+        const auto light = juce::Colour (0xffd0d0d0), dim = juce::Colour (0xff6a6a6a);
+        g.setColour (light);
+        g.setFont (juce::FontOptions (30.0f * k, juce::Font::bold));
+        g.drawText ("EXTERNAL EFFECT", at (350, 14, 400, 36), juce::Justification::centred, false);
+        g.setFont (juce::FontOptions (22.0f * k));
+        for (auto [title, x0, x1] : { std::tuple { "SEND", 40.0f, 358.0f }, { "FX MODE", 448.0f, 770.0f }, { "RETURN", 738.0f, 1060.0f } })
+        {
+            g.setColour (dim);
+            g.drawRect (at (x0, 82, 18, 3));
+            g.drawRect (at (x0, 82, 3, 18));
+            g.drawRect (at (x1 - 18, 82, 18, 3));
+            g.drawRect (at (x1 - 3, 82, 3, 18));
+            g.setColour (light);
+            g.drawText (title, at ((x0 + x1) * 0.5f - 100, 66, 200, 28), juce::Justification::centred, false);
+        }
+        for (const float x : { 70.0f, 990.0f })
+            for (int c = 0; c < 2; ++c)
+            {
+                g.setColour (juce::Colour (0xff3e3e3e));
+                g.fillRect (at (x + 18.0f * (float) c, 122, 12, 168));
+            }
+        for (const float cx : { 208.0f, 288.0f })
+        {
+            g.setColour (light);
+            g.drawEllipse (at (cx - 22, 158, 44, 44), juce::jmax (1.0f, 3.0f * k));
+        }
+        g.setColour (juce::Colour (0xff141414));
+        g.fillRect (at (162, 226, 174, 62));
+        g.setColour (juce::Colours::black);
+        g.fillRect (at (450, 122, 200, 190));
+        g.setColour (juce::Colour (0xff3a78d8));
+        g.fillRect (at (450, 122, 200, 63));
+        g.setColour (light);
+        for (int i = 0; i < 3; ++i)
+            g.drawEllipse (at (472, 138.0f + 63.0f * (float) i, 30, 30), juce::jmax (1.0f, 3.0f * k));
+        g.setColour (juce::Colour (0xff1c1c1c));
+        g.fillRect (at (768, 122, 169, 166));
+        g.setColour (juce::Colour (0xff2a2a2a));
+        g.fillRect (at (797, 150, 110, 110));
+        g.setColour (juce::Colour (0xffe08020));
+        g.fillRect (at (797, 150, 110, 20));
+        g.setColour (juce::Colour (0xff3a78d8));
+        g.fillRect (at (820, 238, 64, 12));
+    }
+} // namespace
+
 void Faceplate::paintThumbnail (juce::Graphics& g, juce::Rectangle<float> r, models::Table t, int model, const juce::String& caption)
 {
     const auto& m = models::model (t, model);
+    if (t == models::Fx && m.token == "EXT" && (caption.isEmpty() || caption == "EXTERNAL" || caption == "OUTBOARD")) // a plugin: its rack unit
+    {
+        paintExternalThumbnail (g, r);
+        return;
+    }
     if (const auto* d = fp::findDesign (t, m.token))
     {
         // The unit's plate, fitted into the tile.
@@ -964,9 +1045,18 @@ void Faceplate::mouseDown (const juce::MouseEvent& e)
     const auto& ctl = controls[(size_t) i];
     if (ctl.param < 0)
     {
-        // A tab of a paged panel.
+        // A tab of a paged panel; a tab bound to a parameter sets it too (a band select).
         if (design != nullptr && ctl.element >= 0)
-            page = design->elements[(size_t) ctl.element].choice;
+        {
+            const auto& tab = design->elements[(size_t) ctl.element];
+            page = tab.choice;
+            if (tab.param >= 0 && tab.param < (int) spec->params.size())
+            {
+                touch (tab.param);
+                setValue (tab.param, spec->params[(size_t) tab.param].min + (float) tab.choice);
+                shown[(size_t) tab.param] = values[tab.param].load();
+            }
+        }
         layoutControls();
         repaint();
         return;
@@ -1003,10 +1093,13 @@ void Faceplate::mouseDrag (const juce::MouseEvent& e)
         return;
     const auto& ctl = controls[(size_t) dragging];
     const auto& p = spec->params[(size_t) ctl.param];
-    const float range = ctl.kind == Kind::Fader ? juce::jmax (40.0f, ctl.area.getHeight() * 0.8f) : 180.0f;
+    // A sideways fader follows the mouse across; the others up and down.
+    const bool across = ctl.kind == Kind::Fader && design != nullptr && ctl.element >= 0 && ! design->elements[(size_t) ctl.element].vertical;
+    const float range = ctl.kind == Kind::Fader ? juce::jmax (40.0f, (across ? ctl.area.getWidth() : ctl.area.getHeight()) * 0.8f) : 180.0f;
     touchedAt = juce::Time::getMillisecondCounter();
     const float fine = e.mods.isShiftDown() ? 0.2f : 1.0f;
-    const float pos = juce::jlimit (0.0f, 1.0f, dragStartPos - (float) e.getDistanceFromDragStartY() / range * fine);
+    const float moved = across ? (float) e.getDistanceFromDragStartX() : -(float) e.getDistanceFromDragStartY();
+    const float pos = juce::jlimit (0.0f, 1.0f, dragStartPos + moved / range * fine);
     values[ctl.param].store (p.fromNormalised (pos));
     repaint();
 }

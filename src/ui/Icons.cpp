@@ -20,18 +20,25 @@ void drawIcon (juce::Graphics& g, Icon icon, juce::Rectangle<float> area, juce::
     {
         case Icon::Gear:
         {
+            // [3.1] an outlined cog (eight teeth) around an outlined hub, thin strokes.
             const auto c = P (0.5f, 0.5f);
+            const float rOut = s * 0.44f, rIn = s * 0.33f, step = juce::MathConstants<float>::twoPi / 8.0f;
+            auto at = [c] (float radius, float angle) { return c + juce::Point<float> (std::sin (angle), -std::cos (angle)) * radius; };
             for (int i = 0; i < 8; ++i)
             {
-                const float a = (float) i * juce::MathConstants<float>::twoPi / 8.0f;
-                juce::Path tooth;
-                tooth.addRectangle (-s * 0.07f, -s * 0.46f, s * 0.14f, s * 0.14f);
-                p.addPath (tooth, juce::AffineTransform::rotation (a).translated (c));
+                const float a = (float) i * step;
+                const auto from = at (rIn, a - step * 0.5f + step * 0.14f);
+                if (i == 0)
+                    p.startNewSubPath (from);
+                else
+                    p.lineTo (from);
+                p.lineTo (at (rOut, a - step * 0.2f));
+                p.lineTo (at (rOut, a + step * 0.2f));
+                p.lineTo (at (rIn, a + step * 0.5f - step * 0.14f));
             }
-            p.addEllipse (c.x - s * 0.33f, c.y - s * 0.33f, s * 0.66f, s * 0.66f);
-            p.addEllipse (c.x - s * 0.13f, c.y - s * 0.13f, s * 0.26f, s * 0.26f);
-            p.setUsingNonZeroWinding (false);
-            g.fillPath (p);
+            p.closeSubPath();
+            p.addEllipse (c.x - s * 0.14f, c.y - s * 0.14f, s * 0.28f, s * 0.28f);
+            g.strokePath (p, juce::PathStrokeType (juce::jmax (1.0f, s * 0.055f), juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
             return;
         }
         case Icon::Tools:
@@ -89,26 +96,93 @@ void drawIcon (juce::Graphics& g, Icon icon, juce::Rectangle<float> area, juce::
                     g.fillRect (P (0.14f + (float) i * 0.26f, 0.14f + (float) j * 0.26f).x, P (0.14f + (float) i * 0.26f, 0.14f + (float) j * 0.26f).y, s * 0.2f, s * 0.2f);
             return;
         case Icon::Headphones:
-            p.addCentredArc (P (0.5f, 0.55f).x, P (0.5f, 0.55f).y, s * 0.36f, s * 0.36f, 0.0f, -1.7f, 1.7f, true);
-            g.strokePath (p, stroke);
-            g.fillRoundedRectangle (P (0.1f, 0.5f).x, P (0.1f, 0.5f).y, s * 0.18f, s * 0.32f, s * 0.05f);
-            g.fillRoundedRectangle (P (0.72f, 0.5f).x, P (0.72f, 0.5f).y, s * 0.18f, s * 0.32f, s * 0.05f);
+        {
+            // [3.1] thin: the headband an arc, each cup an outlined pad with its shell.
+            const juce::PathStrokeType thin (juce::jmax (1.0f, s * 0.055f), juce::PathStrokeType::curved, juce::PathStrokeType::rounded);
+            p.addCentredArc (P (0.5f, 0.56f).x, P (0.5f, 0.56f).y, s * 0.36f, s * 0.38f, 0.0f, -1.62f, 1.62f, true);
+            for (const float u : { 0.14f, 0.86f })
+            {
+                const float dir = u < 0.5f ? 1.0f : -1.0f;
+                p.addRectangle (juce::Rectangle<float> (s * 0.12f, s * 0.28f).withCentre (P (u + dir * 0.08f, 0.7f)));
+                p.addRectangle (juce::Rectangle<float> (s * 0.06f, s * 0.2f).withCentre (P (u - dir * 0.01f, 0.7f)));
+            }
+            g.strokePath (p, thin);
             return;
+        }
         case Icon::Speaker:
-            p.addRoundedRectangle (P (0.22f, 0.08f).x, P (0.22f, 0.08f).y, s * 0.56f, s * 0.84f, s * 0.05f);
-            p.addEllipse (P (0.38f, 0.18f).x, P (0.38f, 0.18f).y, s * 0.24f, s * 0.24f);
-            p.addEllipse (P (0.33f, 0.5f).x, P (0.33f, 0.5f).y, s * 0.34f, s * 0.34f);
-            g.strokePath (p, stroke);
+        {
+            // [3.1] thin: a cabinet with a small tweeter over a ringed woofer.
+            const juce::PathStrokeType thin (juce::jmax (1.0f, s * 0.055f), juce::PathStrokeType::curved, juce::PathStrokeType::rounded);
+            p.addRoundedRectangle (P (0.26f, 0.06f).x, P (0.26f, 0.06f).y, s * 0.48f, s * 0.88f, s * 0.04f);
+            p.addEllipse (juce::Rectangle<float> (s * 0.14f, s * 0.14f).withCentre (P (0.5f, 0.24f)));
+            p.addEllipse (juce::Rectangle<float> (s * 0.32f, s * 0.32f).withCentre (P (0.5f, 0.62f)));
+            p.addEllipse (juce::Rectangle<float> (s * 0.12f, s * 0.12f).withCentre (P (0.5f, 0.62f)));
+            g.strokePath (p, thin);
             return;
+        }
+        case Icon::PhonesSpeaker:
+        {
+            // [3.1] PH+SPK: the left half of the headphones in front of a speaker.
+            const juce::PathStrokeType thin (juce::jmax (1.0f, s * 0.055f), juce::PathStrokeType::curved, juce::PathStrokeType::rounded);
+            p.addRoundedRectangle (P (0.46f, 0.06f).x, P (0.46f, 0.06f).y, s * 0.44f, s * 0.82f, s * 0.04f);
+            p.addEllipse (juce::Rectangle<float> (s * 0.12f, s * 0.12f).withCentre (P (0.68f, 0.22f)));
+            p.addEllipse (juce::Rectangle<float> (s * 0.28f, s * 0.28f).withCentre (P (0.68f, 0.58f)));
+            p.addEllipse (juce::Rectangle<float> (s * 0.1f, s * 0.1f).withCentre (P (0.68f, 0.58f)));
+            p.addCentredArc (P (0.4f, 0.6f).x, P (0.4f, 0.6f).y, s * 0.3f, s * 0.32f, 0.0f, -1.62f, -0.15f, true);
+            p.addRectangle (juce::Rectangle<float> (s * 0.1f, s * 0.24f).withCentre (P (0.17f, 0.74f)));
+            p.addRectangle (juce::Rectangle<float> (s * 0.05f, s * 0.17f).withCentre (P (0.09f, 0.74f)));
+            g.strokePath (p, thin);
+            return;
+        }
+        case Icon::TalkHead:
+        case Icon::TalkHeadRight:
+        {
+            // [3.1] TALK A / B: a speaking head in profile with sound lines at its mouth
+            // (TALK A faces left, TALK B right).
+            juce::Path head;
+            head.startNewSubPath (P (0.84f, 0.06f));
+            head.lineTo (P (0.44f, 0.06f));
+            head.lineTo (P (0.4f, 0.3f));
+            head.lineTo (P (0.3f, 0.46f));
+            head.lineTo (P (0.4f, 0.5f));
+            head.lineTo (P (0.36f, 0.58f));
+            head.lineTo (P (0.41f, 0.64f));
+            head.lineTo (P (0.4f, 0.76f));
+            head.lineTo (P (0.52f, 0.8f));
+            head.lineTo (P (0.54f, 0.94f));
+            head.lineTo (P (0.84f, 0.94f));
+            head.closeSubPath();
+            for (const auto& [a, b] : { std::pair { P (0.08f, 0.38f), P (0.22f, 0.46f) }, std::pair { P (0.04f, 0.56f), P (0.22f, 0.56f) },
+                                        std::pair { P (0.08f, 0.74f), P (0.22f, 0.66f) } })
+            {
+                p.startNewSubPath (a);
+                p.lineTo (b);
+            }
+            const auto flip = icon == Icon::TalkHeadRight ? juce::AffineTransform::scale (-1.0f, 1.0f, P (0.5f, 0.5f).x, 0.0f) : juce::AffineTransform();
+            g.fillPath (head, flip);
+            g.strokePath (p, juce::PathStrokeType (juce::jmax (1.0f, s * 0.06f), juce::PathStrokeType::curved, juce::PathStrokeType::rounded), flip);
+            return;
+        }
         case Icon::LockOpen:
         case Icon::LockClosed:
-            g.fillRoundedRectangle (P (0.2f, 0.45f).x, P (0.2f, 0.45f).y, s * 0.6f, s * 0.45f, s * 0.06f);
-            if (icon == Icon::LockClosed)
-                p.addCentredArc (P (0.5f, 0.45f).x, P (0.5f, 0.45f).y, s * 0.2f, s * 0.24f, 0.0f, -1.57f, 1.57f, true);
-            else
-                p.addCentredArc (P (0.5f, 0.38f).x, P (0.5f, 0.38f).y, s * 0.2f, s * 0.22f, 0.0f, -1.57f, 1.2f, true);
-            g.strokePath (p, juce::PathStrokeType (s * 0.1f));
+        {
+            // [3.1] outlined: a round-cornered body with a keyhole, the shackle an
+            // arch (open: raised, its right leg free).
+            const juce::PathStrokeType lockStroke (juce::jmax (1.0f, s * 0.07f), juce::PathStrokeType::curved, juce::PathStrokeType::rounded);
+            p.addRoundedRectangle (P (0.22f, 0.46f).x, P (0.22f, 0.46f).y, s * 0.56f, s * 0.46f, s * 0.12f);
+            g.strokePath (p, lockStroke);
+            p.clear();
+            const float lift = icon == Icon::LockClosed ? 0.0f : 0.1f;
+            p.startNewSubPath (P (0.32f, 0.46f - lift));
+            p.lineTo (P (0.32f, 0.3f - lift));
+            p.addCentredArc (P (0.5f, 0.3f - lift).x, P (0.5f, 0.3f - lift).y, s * 0.18f, s * 0.2f, 0.0f, -juce::MathConstants<float>::halfPi,
+                             juce::MathConstants<float>::halfPi, false);
+            p.lineTo (P (0.68f, icon == Icon::LockClosed ? 0.46f : 0.34f - lift));
+            g.strokePath (p, lockStroke);
+            g.fillEllipse (P (0.445f, 0.57f).x, P (0.445f, 0.57f).y, s * 0.11f, s * 0.11f);
+            g.fillRect (P (0.475f, 0.62f).x, P (0.475f, 0.62f).y, s * 0.05f, s * 0.12f);
             return;
+        }
         case Icon::Plus:
             p.addEllipse (r.reduced (s * 0.1f));
             p.startNewSubPath (P (0.5f, 0.3f));
@@ -180,12 +254,24 @@ void drawIcon (juce::Graphics& g, Icon icon, juce::Rectangle<float> area, juce::
             g.strokePath (p, stroke);
             return;
         case Icon::Check:
-            p.addRectangle (r.reduced (s * 0.12f));
-            p.startNewSubPath (P (0.3f, 0.5f));
-            p.lineTo (P (0.45f, 0.66f));
-            p.lineTo (P (0.75f, 0.32f));
-            g.strokePath (p, stroke);
+        {
+            // [3.1] a box with rounded corners, open at its top right where the
+            // tick's long stroke ends (the CLOSE keys).
+            const float a = 0.06f, b = 0.94f, rad = 0.1f;
+            p.startNewSubPath (P (0.74f, a));
+            p.lineTo (P (a + rad, a));
+            p.quadraticTo (P (a, a), P (a, a + rad));
+            p.lineTo (P (a, b - rad));
+            p.quadraticTo (P (a, b), P (a + rad, b));
+            p.lineTo (P (b - rad, b));
+            p.quadraticTo (P (b, b), P (b, b - rad));
+            p.lineTo (P (b, 0.5f));
+            p.startNewSubPath (P (0.3f, 0.45f));
+            p.lineTo (P (0.52f, 0.66f));
+            p.lineTo (P (b, a + 0.04f));
+            g.strokePath (p, juce::PathStrokeType (juce::jmax (1.0f, s * 0.065f), juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
             return;
+        }
         case Icon::Reset:
         {
             const auto c = P (0.5f, 0.52f);
@@ -257,11 +343,12 @@ void drawIcon (juce::Graphics& g, Icon icon, juce::Rectangle<float> area, juce::
 
         case Icon::Power:
         {
-            const auto c = P (0.5f, 0.54f);
-            p.addCentredArc (c.x, c.y, s * 0.32f, s * 0.32f, 0.0f, 0.75f, juce::MathConstants<float>::twoPi - 0.75f, true);
-            p.startNewSubPath (P (0.5f, 0.12f));
+            // WING 3.1 (+48V): a bold ring nine tenths of the icon across.
+            const auto c = P (0.5f, 0.55f);
+            p.addCentredArc (c.x, c.y, s * 0.4f, s * 0.4f, 0.0f, 0.7f, juce::MathConstants<float>::twoPi - 0.7f, true);
+            p.startNewSubPath (P (0.5f, 0.06f));
             p.lineTo (P (0.5f, 0.5f));
-            g.strokePath (p, stroke);
+            g.strokePath (p, juce::PathStrokeType (juce::jmax (1.5f, s * 0.13f), juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
             return;
         }
         case Icon::RemoveCircle:
@@ -274,7 +361,12 @@ void drawIcon (juce::Graphics& g, Icon icon, juce::Rectangle<float> area, juce::
             p.clear();
             if (icon == Icon::RemoveCircle)
             {
-                g.fillEllipse (juce::Rectangle<float> (s * 0.26f, s * 0.26f).withCentre (P (0.5f, 0.5f)));
+                // [3.1] REMOVE: an X in the ring.
+                p.startNewSubPath (P (0.38f, 0.38f));
+                p.lineTo (P (0.62f, 0.62f));
+                p.startNewSubPath (P (0.62f, 0.38f));
+                p.lineTo (P (0.38f, 0.62f));
+                g.strokePath (p, stroke);
                 return;
             }
             if (icon == Icon::MinusCircle)
@@ -324,25 +416,78 @@ void drawIcon (juce::Graphics& g, Icon icon, juce::Rectangle<float> area, juce::
             g.strokePath (p, stroke);
             return;
         case Icon::Storage:
-            p.addRoundedRectangle (P (0.12f, 0.24f).x, P (0.12f, 0.24f).y, s * 0.76f, s * 0.52f, s * 0.05f);
-            for (float u : { 0.26f, 0.36f, 0.46f, 0.56f })
+        {
+            // [3.1] INT: a console face, its screen and buttons over five faders.
+            const juce::PathStrokeType thin (juce::jmax (1.0f, s * 0.05f), juce::PathStrokeType::curved, juce::PathStrokeType::rounded);
+            p.addRoundedRectangle (P (0.04f, 0.1f).x, P (0.04f, 0.1f).y, s * 0.92f, s * 0.8f, s * 0.05f);
+            p.addRectangle (P (0.14f, 0.18f).x, P (0.14f, 0.18f).y, s * 0.36f, s * 0.2f);
+            for (int i = 0; i < 5; ++i)
             {
-                p.startNewSubPath (P (u, 0.36f));
-                p.lineTo (P (u, 0.64f));
+                const float u = 0.17f + 0.165f * (float) i;
+                p.startNewSubPath (P (u, 0.48f));
+                p.lineTo (P (u, 0.82f));
             }
-            g.strokePath (p, stroke);
-            g.fillEllipse (juce::Rectangle<float> (s * 0.1f, s * 0.1f).withCentre (P (0.74f, 0.5f)));
+            g.strokePath (p, thin);
+            for (int i = 0; i < 6; ++i)
+                g.fillRect (juce::Rectangle<float> (s * 0.06f, s * 0.06f).withCentre (P (0.6f + 0.1f * (float) (i % 3), 0.22f + 0.1f * (float) (i / 3))));
+            static constexpr float caps[] = { 0.7f, 0.6f, 0.74f, 0.56f, 0.66f };
+            for (int i = 0; i < 5; ++i)
+                g.fillRect (juce::Rectangle<float> (s * 0.12f, s * 0.05f).withCentre (P (0.17f + 0.165f * (float) i, caps[i])));
             return;
+        }
+        case Icon::UsbKey:
+        {
+            // [3.1] a USB stick on its side (LIBRARY / USB recorder location keys).
+            const juce::PathStrokeType thin (juce::jmax (1.0f, s * 0.055f), juce::PathStrokeType::curved, juce::PathStrokeType::rounded);
+            juce::Path body;
+            body.addRoundedRectangle (-s * 0.17f, -s * 0.22f, s * 0.34f, s * 0.52f, s * 0.08f);
+            body.addRectangle (-s * 0.11f, -s * 0.42f, s * 0.22f, s * 0.2f);
+            const auto t = juce::AffineTransform::rotation (juce::MathConstants<float>::pi * 0.25f).translated (P (0.46f, 0.54f));
+            g.strokePath (body, thin, t);
+            juce::Path holes;
+            holes.addRectangle (-s * 0.065f, -s * 0.36f, s * 0.04f, s * 0.06f);
+            holes.addRectangle (s * 0.025f, -s * 0.36f, s * 0.04f, s * 0.06f);
+            g.fillPath (holes, t);
+            return;
+        }
+        case Icon::FolderAdd:
+        {
+            // [3.1] FOLDER: a folder with a circled plus at its lower right.
+            const juce::PathStrokeType thin (juce::jmax (1.0f, s * 0.055f), juce::PathStrokeType::curved, juce::PathStrokeType::rounded);
+            p.startNewSubPath (P (0.62f, 0.78f));
+            p.lineTo (P (0.08f, 0.78f));
+            p.lineTo (P (0.08f, 0.16f));
+            p.lineTo (P (0.34f, 0.16f));
+            p.lineTo (P (0.42f, 0.26f));
+            p.lineTo (P (0.84f, 0.26f));
+            p.lineTo (P (0.84f, 0.5f));
+            p.addEllipse (juce::Rectangle<float> (s * 0.34f, s * 0.34f).withCentre (P (0.78f, 0.74f)));
+            p.startNewSubPath (P (0.78f, 0.64f));
+            p.lineTo (P (0.78f, 0.84f));
+            p.startNewSubPath (P (0.68f, 0.74f));
+            p.lineTo (P (0.88f, 0.74f));
+            g.strokePath (p, thin);
+            return;
+        }
         case Icon::ShowFile:
-            p.addRectangle (r.reduced (s * 0.14f, s * 0.18f));
-            g.strokePath (p, stroke);
-            for (float u : { 0.24f, 0.4f, 0.56f, 0.72f })
-                for (float v : { 0.24f, 0.72f })
-                    g.fillRect (P (u, v).x, P (u, v).y, s * 0.07f, s * 0.05f);
-            p.clear();
-            p.addTriangle (P (0.42f, 0.38f), P (0.42f, 0.62f), P (0.62f, 0.5f));
+        {
+            // [3.1] a film frame: bands with sprocket holes along its top and
+            // bottom, thin sides, a play triangle.
+            juce::Path bands;
+            for (float v : { 0.06f, 0.74f })
+            {
+                bands.addRectangle (juce::Rectangle<float> (P (0.12f, v), P (0.88f, v + 0.2f)));
+                for (int i = 0; i < 5; ++i)
+                    bands.addRectangle (juce::Rectangle<float> (s * 0.07f, s * 0.08f).withCentre (P (0.22f + 0.14f * (float) i, v + 0.1f)));
+            }
+            bands.setUsingNonZeroWinding (false);
+            g.fillPath (bands);
+            g.fillRect (juce::Rectangle<float> (P (0.12f, 0.26f), P (0.17f, 0.74f)));
+            g.fillRect (juce::Rectangle<float> (P (0.83f, 0.26f), P (0.88f, 0.74f)));
+            p.addTriangle (P (0.4f, 0.36f), P (0.4f, 0.64f), P (0.64f, 0.5f));
             g.fillPath (p);
             return;
+        }
         case Icon::GoPrev:
         case Icon::GoNext:
         {
@@ -357,24 +502,40 @@ void drawIcon (juce::Graphics& g, Icon icon, juce::Rectangle<float> area, juce::
             return;
         }
         case Icon::SortDate:
-            p.addRectangle (P (0.12f, 0.2f).x, P (0.12f, 0.2f).y, s * 0.56f, s * 0.54f);
-            p.startNewSubPath (P (0.12f, 0.36f));
-            p.lineTo (P (0.68f, 0.36f));
-            for (float u : { 0.26f, 0.54f })
+        {
+            // [3.1] a calendar grid with a circled down arrow at its lower right.
+            const juce::PathStrokeType thin (juce::jmax (1.0f, s * 0.05f), juce::PathStrokeType::curved, juce::PathStrokeType::rounded);
+            p.startNewSubPath (P (0.56f, 0.8f));
+            p.lineTo (P (0.06f, 0.8f));
+            p.lineTo (P (0.06f, 0.16f));
+            p.lineTo (P (0.82f, 0.16f));
+            p.lineTo (P (0.82f, 0.5f));
+            p.startNewSubPath (P (0.06f, 0.32f));
+            p.lineTo (P (0.82f, 0.32f));
+            for (float v : { 0.48f, 0.64f })
             {
-                p.startNewSubPath (P (u, 0.12f));
-                p.lineTo (P (u, 0.26f));
+                p.startNewSubPath (P (0.06f, v));
+                p.lineTo (P (0.56f, v));
             }
-            g.strokePath (p, stroke);
-            p.clear();
-            p.addEllipse (juce::Rectangle<float> (s * 0.4f, s * 0.4f).withCentre (P (0.7f, 0.7f)));
-            g.strokePath (p, stroke);
-            p.clear();
-            p.startNewSubPath (P (0.7f, 0.58f));
-            p.lineTo (P (0.7f, 0.7f));
-            p.lineTo (P (0.79f, 0.76f));
-            g.strokePath (p, stroke);
+            for (float u : { 0.25f, 0.44f, 0.63f })
+            {
+                p.startNewSubPath (P (u, 0.32f));
+                p.lineTo (P (u, u > 0.6f ? 0.5f : 0.8f));
+            }
+            for (float u : { 0.25f, 0.63f })
+            {
+                p.startNewSubPath (P (u, 0.08f));
+                p.lineTo (P (u, 0.22f));
+            }
+            p.addEllipse (juce::Rectangle<float> (s * 0.36f, s * 0.36f).withCentre (P (0.76f, 0.76f)));
+            p.startNewSubPath (P (0.76f, 0.65f));
+            p.lineTo (P (0.76f, 0.85f));
+            p.startNewSubPath (P (0.69f, 0.78f));
+            p.lineTo (P (0.76f, 0.85f));
+            p.lineTo (P (0.83f, 0.78f));
+            g.strokePath (p, thin);
             return;
+        }
         case Icon::Overview:
             for (int i = 0; i < 4; ++i)
                 for (int j = 0; j < 4; ++j)
@@ -482,6 +643,130 @@ void drawIcon (juce::Graphics& g, Icon icon, juce::Rectangle<float> area, juce::
         case Icon::Record:
             g.fillEllipse (r.reduced (s * 0.24f));
             return;
+        case Icon::SaveScope:
+        case Icon::UpdateTray:
+        case Icon::PartialUpdate:
+        case Icon::EditScope:
+        case Icon::PartialLoad:
+        case Icon::RestoreTray:
+        case Icon::OpenOut:
+        case Icon::CloseIn:
+        case Icon::EditTag:
+        case Icon::SendMidi:
+        {
+            // [3.1] the LIBRARY's keys (Fig. 45 / 46): a tray with arrows or a
+            // pencil, small scope squares, a box with an arrow out or in.
+            const juce::PathStrokeType thin (juce::jmax (1.0f, s * 0.06f), juce::PathStrokeType::curved, juce::PathStrokeType::rounded);
+            auto tray = [&] (float l, float rgt)
+            {
+                p.startNewSubPath (P (l, 0.64f));
+                p.lineTo (P (l, 0.84f));
+                p.lineTo (P (rgt, 0.84f));
+                p.lineTo (P (rgt, 0.64f));
+            };
+            auto arrow = [&] (float u, bool down)
+            {
+                p.startNewSubPath (P (u, 0.14f));
+                p.lineTo (P (u, 0.62f));
+                p.startNewSubPath (P (u - 0.14f, down ? 0.48f : 0.28f));
+                p.lineTo (P (u, down ? 0.62f : 0.14f));
+                p.lineTo (P (u + 0.14f, down ? 0.48f : 0.28f));
+            };
+            auto pencil = [&] (float u, float v, float k)
+            {
+                // A pencil k units long, its tip at (u, v), pointing down-left.
+                const auto tip = P (u, v);
+                const auto d = juce::Point<float> (s * k * 0.62f, -s * k * 0.62f), n = juce::Point<float> (s * k * 0.16f, s * k * 0.16f);
+                p.startNewSubPath (tip);
+                p.lineTo (tip + d * 0.25f + n);
+                p.lineTo (tip + d + n);
+                p.lineTo (tip + d - n);
+                p.lineTo (tip + d * 0.25f - n);
+                p.closeSubPath();
+            };
+            auto square = [&] (float u, float v, bool filled)
+            {
+                const auto sq = juce::Rectangle<float> (s * 0.16f, s * 0.16f).withPosition (P (u, v));
+                if (filled)
+                    g.fillRect (sq);
+                else
+                    p.addRectangle (sq);
+            };
+            if (icon == Icon::SaveScope)
+            {
+                tray (0.08f, 0.88f);
+                arrow (0.3f, true);
+                square (0.6f, 0.16f, true);
+                square (0.6f, 0.4f, false);
+            }
+            else if (icon == Icon::UpdateTray)
+            {
+                tray (0.08f, 0.88f);
+                pencil (0.34f, 0.56f, 0.6f);
+            }
+            else if (icon == Icon::PartialUpdate)
+            {
+                tray (0.08f, 0.88f);
+                pencil (0.22f, 0.56f, 0.5f);
+                square (0.6f, 0.16f, false);
+                square (0.6f, 0.4f, false);
+            }
+            else if (icon == Icon::EditScope)
+            {
+                pencil (0.12f, 0.5f, 0.5f);
+                square (0.62f, 0.38f, false);
+                square (0.06f, 0.66f, false);
+                square (0.34f, 0.66f, true);
+                square (0.62f, 0.66f, true);
+            }
+            else if (icon == Icon::PartialLoad)
+            {
+                tray (0.08f, 0.88f);
+                arrow (0.3f, false);
+                square (0.6f, 0.16f, false);
+                square (0.6f, 0.4f, false);
+            }
+            else if (icon == Icon::RestoreTray)
+            {
+                tray (0.08f, 0.88f);
+                arrow (0.32f, false);
+                arrow (0.66f, false);
+            }
+            else if (icon == Icon::OpenOut || icon == Icon::CloseIn)
+            {
+                // A box open at its top right, an arrow leaving it there (OPEN) or entering it (CLOSE).
+                p.startNewSubPath (P (0.5f, 0.12f));
+                p.lineTo (P (0.16f, 0.12f));
+                p.quadraticTo (P (0.1f, 0.12f), P (0.1f, 0.18f));
+                p.lineTo (P (0.1f, 0.84f));
+                p.quadraticTo (P (0.1f, 0.9f), P (0.16f, 0.9f));
+                p.lineTo (P (0.82f, 0.9f));
+                p.quadraticTo (P (0.88f, 0.9f), P (0.88f, 0.84f));
+                p.lineTo (P (0.88f, 0.5f));
+                const bool out = icon == Icon::OpenOut;
+                const auto from = out ? P (0.42f, 0.58f) : P (0.86f, 0.14f), to = out ? P (0.86f, 0.14f) : P (0.36f, 0.64f);
+                p.startNewSubPath (from);
+                p.lineTo (to);
+                const auto back = out ? juce::Point<float> (-s * 0.24f, 0.0f) : juce::Point<float> (s * 0.24f, 0.0f);
+                const auto side = out ? juce::Point<float> (0.0f, s * 0.24f) : juce::Point<float> (0.0f, -s * 0.24f);
+                p.startNewSubPath (to + back);
+                p.lineTo (to);
+                p.lineTo (to + side);
+            }
+            else if (icon == Icon::EditTag)
+            {
+                pencil (0.3f, 0.6f, 0.6f);
+                p.addRoundedRectangle (juce::Rectangle<float> (P (0.12f, 0.7f), P (0.7f, 0.9f)), s * 0.1f);
+            }
+            else
+            {
+                pencil (0.3f, 0.56f, 0.56f);
+                g.setFont (wingFontPx (s * 0.2f, WingWeight::SemiBold));
+                g.drawText ("MIDI", juce::Rectangle<float> (P (0.0f, 0.66f), P (1.0f, 0.96f)), juce::Justification::centred, false);
+            }
+            g.strokePath (p, thin);
+            return;
+        }
         case Icon::SaveTray:
         case Icon::LoadTray:
         {
@@ -501,15 +786,45 @@ void drawIcon (juce::Graphics& g, Icon icon, juce::Rectangle<float> area, juce::
         case Icon::SourcesIn:
         case Icon::OutputsOut:
         {
+            // [3.1] a thick ring open towards the arrow, and a solid block arrow:
+            // into the ring from the left (SOURCES), out of it to the right (OUTPUTS).
             const bool in = icon == Icon::SourcesIn;
-            p.addCentredArc (P (0.58f, 0.5f).x, P (0.58f, 0.5f).y, s * 0.3f, s * 0.3f, 0.0f, in ? -2.6f : 0.55f, in ? 2.6f : 5.73f, true);
-            p.startNewSubPath (P (in ? 0.06f : 0.36f, 0.5f));
-            p.lineTo (P (in ? 0.62f : 0.94f, 0.5f));
-            const float tip = in ? 0.62f : 0.94f;
-            p.startNewSubPath (P (tip - 0.16f, 0.36f));
-            p.lineTo (P (tip, 0.5f));
-            p.lineTo (P (tip - 0.16f, 0.64f));
-            g.strokePath (p, stroke);
+            const float cx = in ? 0.64f : 0.38f, open = 0.8f, half = juce::MathConstants<float>::halfPi;
+            const float from = in ? -half + open : half + open, to = in ? 3.0f * half - open : 5.0f * half - open;
+            p.addCentredArc (P (cx, 0.5f).x, P (cx, 0.5f).y, s * 0.3f, s * 0.3f, 0.0f, from, to, true);
+            g.strokePath (p, juce::PathStrokeType (s * 0.09f, juce::PathStrokeType::curved, juce::PathStrokeType::butt));
+            juce::Path arrow;
+            const float x0 = in ? 0.02f : 0.38f, neck = in ? 0.38f : 0.76f, tip = in ? 0.62f : 0.99f;
+            arrow.addRectangle (P (x0, 0.4f).x, P (x0, 0.4f).y, s * (neck - x0), s * 0.2f);
+            arrow.addTriangle (P (neck, 0.27f), P (tip, 0.5f), P (neck, 0.73f));
+            g.fillPath (arrow);
+            return;
+        }
+        case Icon::Polarity:
+            // [3.1] "+ | -": a plus and a minus either side of a bar.
+            p.startNewSubPath (P (0.08f, 0.5f));
+            p.lineTo (P (0.34f, 0.5f));
+            p.startNewSubPath (P (0.21f, 0.37f));
+            p.lineTo (P (0.21f, 0.63f));
+            p.startNewSubPath (P (0.5f, 0.14f));
+            p.lineTo (P (0.5f, 0.86f));
+            p.startNewSubPath (P (0.66f, 0.5f));
+            p.lineTo (P (0.92f, 0.5f));
+            g.strokePath (p, juce::PathStrokeType (juce::jmax (1.0f, s * 0.07f)));
+            return;
+        case Icon::ChannelFaders:
+        {
+            // [3.1] two thick fader slots, the caps outlined pills (left high, right low).
+            const float t = s * 0.085f;
+            for (const auto& [u, cap] : { std::pair { 0.3f, 0.42f }, std::pair { 0.68f, 0.62f } })
+            {
+                const auto pill = juce::Rectangle<float> (s * 0.4f, s * 0.17f).withCentre (P (u, cap));
+                const float x0 = P (u, 0.0f).x - t * 0.5f;
+                g.fillRect (x0, P (u, 0.04f).y, t, pill.getY() - P (u, 0.04f).y);
+                g.fillRect (x0, pill.getBottom(), t, P (u, 0.96f).y - pill.getBottom());
+                p.addRoundedRectangle (pill, pill.getHeight() * 0.5f);
+            }
+            g.strokePath (p, juce::PathStrokeType (t * 0.85f));
             return;
         }
         case Icon::ChevronUp:
@@ -642,9 +957,12 @@ void drawIcon (juce::Graphics& g, Icon icon, juce::Rectangle<float> area, juce::
             g.strokePath (p, stroke);
             return;
         case Icon::UsbStick:
-            p.addRoundedRectangle (P (0.32f, 0.36f).x, P (0.32f, 0.36f).y, s * 0.36f, s * 0.54f, s * 0.05f);
-            p.addRectangle (P (0.38f, 0.1f).x, P (0.38f, 0.1f).y, s * 0.24f, s * 0.26f);
+            // [3.1] a wide rounded body under a narrower plug with its two contacts.
+            p.addRoundedRectangle (P (0.25f, 0.44f).x, P (0.25f, 0.44f).y, s * 0.5f, s * 0.46f, s * 0.08f);
+            p.addRectangle (P (0.33f, 0.1f).x, P (0.33f, 0.1f).y, s * 0.34f, s * 0.34f);
             g.strokePath (p, stroke);
+            g.fillRect (P (0.41f, 0.2f).x, P (0.41f, 0.2f).y, s * 0.06f, s * 0.1f);
+            g.fillRect (P (0.53f, 0.2f).x, P (0.53f, 0.2f).y, s * 0.06f, s * 0.1f);
             return;
         case Icon::ReturnToStart:
             g.fillRect (P (0.2f, 0.22f).x, P (0.2f, 0.22f).y, s * 0.1f, s * 0.56f);
@@ -703,14 +1021,21 @@ void drawIcon (juce::Graphics& g, Icon icon, juce::Rectangle<float> area, juce::
             return;
         }
         case Icon::SdCard:
-            p.startNewSubPath (P (0.3f, 0.1f));
-            p.lineTo (P (0.72f, 0.1f));
-            p.lineTo (P (0.72f, 0.9f));
-            p.lineTo (P (0.24f, 0.9f));
-            p.lineTo (P (0.24f, 0.2f));
+        {
+            // [3.1] a card 3:4 with its top left corner clipped, rounded corners, thin outline.
+            const float l = 0.12f, t = 0.02f, rgt = 0.88f, b = 0.98f, cut = 0.22f, rad = 0.06f;
+            p.startNewSubPath (P (l + cut, t));
+            p.lineTo (P (rgt - rad, t));
+            p.quadraticTo (P (rgt, t), P (rgt, t + rad));
+            p.lineTo (P (rgt, b - rad));
+            p.quadraticTo (P (rgt, b), P (rgt - rad, b));
+            p.lineTo (P (l + rad, b));
+            p.quadraticTo (P (l, b), P (l, b - rad));
+            p.lineTo (P (l, t + cut));
             p.closeSubPath();
-            g.strokePath (p, stroke);
+            g.strokePath (p, juce::PathStrokeType (juce::jmax (1.0f, s * 0.05f), juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
             return;
+        }
         case Icon::Waveform:
         {
             const float heights[] = { 0.16f, 0.34f, 0.24f, 0.44f, 0.3f, 0.18f, 0.38f, 0.22f, 0.12f };
@@ -862,6 +1187,46 @@ void drawIcon (juce::Graphics& g, Icon icon, juce::Rectangle<float> area, juce::
                     p.lineTo (P (u, v + sy * d));
                 }
             g.strokePath (p, stroke);
+            return;
+        }
+        case Icon::Plug:
+            // A cable into a round plug body with two pins, on one line.
+            p.startNewSubPath (P (0.06f, 0.5f));
+            p.lineTo (P (0.3f, 0.5f));
+            p.addEllipse (juce::Rectangle<float> (s * 0.22f, s * 0.22f).withCentre (P (0.41f, 0.5f)));
+            p.startNewSubPath (P (0.52f, 0.4f));
+            p.lineTo (P (0.68f, 0.4f));
+            p.startNewSubPath (P (0.52f, 0.6f));
+            p.lineTo (P (0.68f, 0.6f));
+            p.startNewSubPath (P (0.68f, 0.36f));
+            p.lineTo (P (0.68f, 0.64f));
+            p.startNewSubPath (P (0.68f, 0.5f));
+            p.lineTo (P (0.94f, 0.5f));
+            g.strokePath (p, stroke);
+            return;
+        case Icon::FilterBand:
+            p.startNewSubPath (P (0.08f, 0.68f));
+            p.quadraticTo (P (0.24f, 0.32f), P (0.36f, 0.32f));
+            p.lineTo (P (0.64f, 0.32f));
+            p.quadraticTo (P (0.76f, 0.32f), P (0.92f, 0.68f));
+            g.strokePath (p, stroke);
+            return;
+        case Icon::FaderCap:
+            p.startNewSubPath (P (0.5f, 0.06f));
+            p.lineTo (P (0.5f, 0.94f));
+            g.strokePath (p, stroke);
+            g.fillRoundedRectangle (juce::Rectangle<float> (s * 0.44f, s * 0.2f).withCentre (P (0.5f, 0.42f)), s * 0.04f);
+            return;
+        case Icon::PanKnob:
+        {
+            const auto c = P (0.5f, 0.5f);
+            p.addEllipse (juce::Rectangle<float> (s * 0.8f, s * 0.8f).withCentre (c));
+            g.strokePath (p, stroke);
+            juce::Path knob;
+            knob.addEllipse (juce::Rectangle<float> (s * 0.5f, s * 0.5f).withCentre (c));
+            knob.addEllipse (juce::Rectangle<float> (s * 0.14f, s * 0.14f).withCentre (P (0.64f, 0.36f)));
+            knob.setUsingNonZeroWinding (false);
+            g.fillPath (knob);
             return;
         }
     }

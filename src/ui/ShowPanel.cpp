@@ -571,7 +571,10 @@ ShowPanel::ShowPanel (UiContext& c) : ctx (c)
     showKey.litColour = FileColours::show;
     showKey.isLit = [this] { return location == Location::Show; };
     showKey.onClick = [this] { setLocation (Location::Show); };
-    showKey.caption = [this] { return juce::String (ctx.show.getNumScenes()) + " SCNS"; };
+    // "5 SCNS"; "SHOW" while the show has no scenes (as the console without a show).
+    showKey.caption = [this] { return ctx.show.getNumScenes() > 0 ? juce::String (ctx.show.getNumScenes()) + " SCNS" : juce::String ("SHOW"); };
+    for (auto* k : { &intKey, &usbKey, &showKey, &sortDateKey })
+        k->blackFace = true;
     folderKey.onClick = [this] { newFolder(); };
     fileRenameKey.onClick = [this] { renameFile(); };
     deleteKey.onClick = [this] { deleteFile(); };
@@ -942,23 +945,22 @@ void ShowPanel::resized()
     }
 
     auto t = toolbar.reduced (px (4.0f), juce::roundToInt ((float) toolbar.getHeight() / 16.0f));
-    const int w = px (60.0f);
-    auto sources = t.withTrimmedLeft (px (4.0f));
-    intKey.setBounds (sources.removeFromLeft (w));
-    usbKey.setBounds (sources.removeFromLeft (w));
-    sources.removeFromLeft (px (4.0f));
-    showKey.setBounds (sources.removeFromLeft (w));
-    // At INT / USB: FOLDER, RENAME, (gap) DELETE, and the sort keys at the right.
+    // [3.1] INT 4-64, USB 66-124, SHOW 128-188 px into the toolbar.
     auto at = [&] (float left, float width) { return juce::Rectangle<int> (toolbar.getX() + px (left), t.getY(), px (width), t.getHeight()); };
+    intKey.setBounds (at (4.0f, 60.0f));
+    usbKey.setBounds (at (66.0f, 58.0f));
+    showKey.setBounds (at (128.0f, 60.0f));
+    // At INT / USB: FOLDER, RENAME, (gap) DELETE, and the sort keys at the right.
     folderKey.setBounds (at (262.0f, 60.0f));
     fileRenameKey.setBounds (at (326.0f, 60.0f));
     deleteKey.setBounds (at (450.0f, 60.0f));
     sortTypeKey.setBounds (at (532.0f, 56.0f));
     sortDateKey.setBounds (at (592.0f, 52.0f));
-    t = t.withTrimmedLeft (showKey.getRight() - t.getX());
-    t.removeFromLeft (juce::jmax (4, (t.getWidth() - 6 * w) / 2));
+    // At SHOW [Fig. 45]: REMOVE and RENAME, then SKIP, LINK, UP and DOWN 64 px apart.
+    const float centres[] = { 260.0f, 356.0f, 424.0f, 489.0f, 552.0f, 616.0f };
+    int i = 0;
     for (auto* k : { &removeKey, &renameKey, &skipKey, &linkKey, &upKey, &downKey })
-        k->setBounds (t.removeFromLeft (w));
+        k->setBounds (at (centres[i++] - 30.0f, 60.0f));
 }
 
 } // namespace livedaw::ui

@@ -23,7 +23,7 @@ enum class Type
     Knob,    // rotary control; x, y = centre, w = diameter
     Toggle,  // bat-lever switch; x, y = centre, w = nut diameter
     Key,     // push key (look decides the style); x, y, w, h = rectangle
-    Fader,   // vertical fader; x, y, w, h = slot area (cap travels inside)
+    Fader,   // vertical fader; x, y, w, h = slot area (cap travels inside); sideways(): horizontal
     Vu,      // needle meter showing the gain reduction; x, y, w, h = face
     Leds,    // a row or column of LEDs showing the gain reduction
     Lamp,    // round indicator; x, y = centre, w = diameter
@@ -32,7 +32,8 @@ enum class Type
     Box,     // decorative rectangle (sections, windows, cheeks)
     Screw,   // panel screw; x, y = centre, w = diameter
     Display, // alphanumeric display showing parameter values
-    Value,   // a parameter's value printed (7-segment / LCD); x, y, w, h = box
+    Value,   // a parameter's value printed (7-segment / LCD); x, y, w, h = box. Unbound (param -1)
+             // with `params`: a readout of the control last touched (params[0] until one is)
     Graph    // a graph screen (`graph` says which, `params` what it shows); x, y, w, h
 };
 
@@ -45,11 +46,13 @@ enum class GraphKind
     Taps,     // delay echoes. choice 0: time, feedback (repeats of one tap);
               // 1: time, repeats, slope dB, pre-delay (a row of taps); 2: time, feedback, factor, pattern ("a:b", L and R)
     Decay,    // reverb envelope. choice 0: pre-delay, decay (s); 1 (gated): pre-delay, attack, decay; 2 (reverse): pre-delay, rise, decay
+              // 3: an envelope follower's attack, hold, release (ms)
     Lfo,      // modulation: speed (Hz), depth, [phase deg], [wave]; L and R traces
     Transfer, // static curve. choice 0: threshold dB, ratio, [knee]; 1 (limiter): input gain, output gain, knee
     DeEss,    // a de-esser's band: frequency, range dB, [mode: full band when it reads FULL]; the live cut from the gain reduction
     Filter,   // a resonant filter: base frequency, type (LP/HP/BP/NOTCH), slope (12/24), resonance 0..10
-    Levels    // a bar per param (band levels), centred when the range is bipolar
+    Levels,   // a bar per param (band levels), centred when the range is bipolar
+    Bands     // a multiband compressor's five bands: threshold offsets 1-5, then the band selected (filled)
 };
 
 enum class Look
@@ -72,6 +75,8 @@ enum class Look
     ColourDome,   // black ring around a glossy coloured dome, white line
     NumberDial,   // white dial whose printed numbers turn under a fixed index
     Lobed,        // cream lobed knob with a coloured cap
+    BarKnob,      // black knob with a raised bar across it, white line at one end
+    ArcRing,      // flat screen knob: grey track, the value as an arc (colour), white pointer
     // Keys
     SoulKey,    // grey raised key with a caption and an LED to its right
     LitSquare,  // square key that lights (colour) when on
@@ -80,7 +85,8 @@ enum class Look
     LedKey,     // small square key with an LED in it
     FlatKey,    // flat screen key, filled with colour when on
     Hidden,     // invisible key over printed text (a click area)
-    TabKey,     // a tab that shows page `choice` of the panel
+    PianoKey,   // a note key: lit in its colour (text colour2), dimmed when off
+    TabKey,     // a tab that shows page `choice` of the panel (and, bound, sets its parameter to it); no text: invisible
     // Vu faces
     VuAmber,    // backlit amber face, chrome bezel
     VuAmberDark,// backlit amber face, black housing
@@ -94,6 +100,7 @@ enum class Look
     Inset,      // recessed window (colour)
     Wood,       // wooden cheek
     Line,       // outline only (colour)
+    Plate,      // a unit's plate: colour, texture (choice), wear (fixed), screws (vertical)
     // Text faces
     Sans,       // panel print (condensed sans, bold)
     SansLight,  // condensed sans, regular
@@ -102,7 +109,8 @@ enum class Look
     SerifItalic,
     Script,     // bold italic logo lettering
     Segment,    // 7-segment display digits
-    Dot         // dot-matrix display
+    Dot,        // dot-matrix display
+    Wheel       // a value: a list's entries round the current one (highlighted in `band`), in a round window
 };
 
 enum class Texture
@@ -143,12 +151,16 @@ struct Element
     int choice = -1;
     bool invert = false;    // toggle up / key lit when the value is at its minimum
     int alsoOn = -1;        // a second value index that lights the element
+    // Lamps: lit while lo <= value < hi (marks = { lo, hi, value a click sets }), one LED of a ladder
+
+    // Values: the unit printed beside the number (7-segment displays); 0 none, 1 left, 2 right
+    int unitAt = 0;
 
     // Meters
     juce::StringArray scale; // Vu labels / LED captions
     std::vector<float> marks; // Vu label positions (gain reduction dB) / LED thresholds
     float range = 20.0f;     // Vu: dB at the end of the scale
-    bool vertical = true;    // Leds
+    bool vertical = true;    // Leds, faders
     bool reverse = false;    // Vu: needle rises with reduction (compression meters)
     float vuZero = 1.0f;     // Vu: where 0 dB sits along the arc (0..1)
     float captionY = 0.74f;  // Vu: caption position (fraction of the face height)
@@ -188,6 +200,9 @@ struct Element
     Element& centred (float degrees) { centre = degrees; return *this; }
     Element& banded (juce::uint32 c) { band = juce::Colour (c); return *this; }
     Element& sideways() { vertical = false; return *this; }
+    Element& unitSide (int side, float sz) { unitAt = side; labelSize = sz; return *this; }
+    /** A ladder LED: lit while lo <= value < hi; a click sets `set`. */
+    Element& lights (float lo, float hi, float set) { marks = { lo, hi, set }; return *this; }
     Element& shows (GraphKind g, std::vector<int> ps, int variant = -1)
     {
         graph = g;
@@ -206,6 +221,9 @@ struct Design
     juce::Rectangle<float> plate { 30.0f, 70.0f, 1096.0f, 336.0f }; // the unit's panel
     bool screws = true;
     bool backdrop = true;               // the screen's scratched frame around it
+    juce::String badge;                 // thumbnails: letters over `badgeArea` (the HALL remotes' "HA", "RO"...)
+    juce::Rectangle<float> badgeArea;
+    std::vector<juce::Colour> collage;  // thumbnails: the pages side by side in slanted slices, tinted (channel strips)
     std::vector<Element> elements;
 
     Element& add (Type t, float x, float y, float w = 0, float h = 0)
@@ -312,6 +330,11 @@ struct Design
 /** The drawn panel of a model, or nullptr (the generic panel). */
 const Design* findDesign (models::Table, const juce::String& token);
 
+/** The control an FX device's rack tile shows on its ring: the one the console
+    shows (WING 3.1 EFFECTS screen: REVERSE RISE, DELAY/REVERB TIME, SPEAKER
+    MANAGER TILT F...), else DECAY for reverbs, TIME for delays and so on. */
+int rackTileParam (const models::Model&);
+
 /** The panels drawn without a console screen picture to measure (FaceplateDevices.cpp):
     the FX devices' units laid out from their parameter lists. Keys "F:" + token. */
 void addDeviceDesigns (std::map<juce::String, Design>&);
@@ -331,6 +354,10 @@ struct PaintContext
 
 /** Paints the design in frame coordinates (the caller sets the transform). */
 void paintDesign (juce::Graphics&, const Design&, const PaintContext&);
+
+/** A console value text as a 7-segment display shows it: the number ("5k02 Hz"
+    reads "5.02") and its unit ("kHz"; ms and s in capitals). */
+std::pair<juce::String, juce::String> segmentText (const juce::String& consoleText);
 
 /** The position 0..1 a parameter's control shows. */
 float controlPosition (const models::Param&, float value);

@@ -53,6 +53,10 @@ public:
             expectEquals (routing::sourceLabel (Recorder::playbackSource (4)), juce::String ("PLAY 5"));
             expectEquals (routing::sourceLabel (UsbRecorder::playerSource (1)), juce::String ("PLAYER 2"));
             expectEquals (routing::pairLabel (Recorder::playbackSource (2), Recorder::playbackSource (3)), juce::String ("PLAY 3/4"));
+            // A channel tile prints the port, not the source's name (the USB player's 1/2 is "2TR").
+            expectEquals (routing::channelTileLabel (UsbRecorder::playerSource (0), UsbRecorder::playerSource (1), true), juce::String ("PLAYER 1/2"));
+            expectEquals (routing::channelTileLabel (UsbRecorder::playerSource (0), -1, true), juce::String ("PLAYER 1/2"));
+            expectEquals (routing::channelTileLabel (Recorder::playbackSource (4), -1, false), juce::String ("PLAY 5"));
             // Groups Sidecar doesn't have can be shown but not patched.
             for (auto g : { Group::AuxIn, Group::AesIn, Group::StConnect, Group::UsbAudio, Group::Dante, Group::FxSend })
                 expectEquals (routing::sourceAt (g, 0), -1);

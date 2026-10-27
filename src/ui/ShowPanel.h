@@ -98,10 +98,10 @@ private:
     std::unique_ptr<FileList> files;
     Location location = Location::Show;
     std::unique_ptr<juce::FileChooser> chooser;
-    ToolKey intKey { "INT", Icon::Storage }, usbKey { "USB", Icon::UsbStick }, showKey { "SHOW", Icon::ShowFile, FileColours::show },
+    ToolKey intKey { "INT", Icon::Storage }, usbKey { "USB", Icon::UsbKey }, showKey { "SHOW", Icon::ShowFile, FileColours::show },
         removeKey { "REMOVE", Icon::RemoveCircle }, renameKey { "RENAME", Icon::Edit }, skipKey { "SKIP", Icon::Skip, Dark::on },
         linkKey { "LINK", Icon::Link, FileColours::wav }, upKey { "UP", Icon::ChevronUp }, downKey { "DOWN", Icon::ChevronDown },
-        folderKey { "FOLDER", Icon::Folder }, fileRenameKey { "RENAME", Icon::Edit }, deleteKey { "DELETE", Icon::Trash },
+        folderKey { "FOLDER", Icon::FolderAdd }, fileRenameKey { "RENAME", Icon::Edit }, deleteKey { "DELETE", Icon::Trash },
         sortTypeKey { "NAME/TYPE", Icon::ListAll }, sortDateKey { "DATE", Icon::SortDate };
     juce::Rectangle<int> toolbar, listArea;
 };

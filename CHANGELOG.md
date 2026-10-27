@@ -272,7 +272,91 @@ All notable changes to Sidecar are listed here. Versions follow
   the alternative one). Before, a press switched SOF in both modes.
 - VIEW > FADERS: AUTO RIDER in the COMP slot shows its square, lit while it rides
   (manual 5.8 p. 63).
+
 ### Changed
+
+- Display screens matched to screenshots of a WING (firmware 3.1), side by side at 1280 x 800:
+  - Status bar: the WING-LIVE cards are white outlines with a clipped corner over a separate
+    "LIVE" strip with the dots at its ends; the USB stick, the SETTINGS gear and the padlocks
+    are outlines as on the console; the A / B / C / SC chips have black print; the clock's
+    colon is set tight and the digits and date sit as on the console. ROUTING's SOURCES and
+    OUTPUTS title tile is #585858 with the number, icon and name at the console's places.
+  - ROUTING: the CHANNELS / SOURCES / OUTPUTS keys have the console's icons (two faders, a
+    block arrow into and out of a ring); the right grid is no longer dimmed while the patch
+    is locked; a channel tile prints its port ("PLAY 1/2"), not the source's name; the
+    selection frame is 4 px; the SOURCE GROUP box has the console's icon and type sizes;
+    SOURCES' POL key shows "+|-" and its GAIN sits in the parameter bar's last slot.
+  - SETUP > AUDIO > INPUT SELECT is a floating 937 x 480 window as in the manual's Fig. 35:
+    two framed panels, 52 px cells in pairs of rows with "CH" over a rule and the number.
+  - LIBRARY: the INT / USB / SHOW keys and the date key have black faces and the console's
+    icons (a console face, a USB stick on its side, a film frame); FOLDER, REMOVE, SAVE
+    +SCOPE, UPDATE, PARTIAL UPDATE / LOAD, EDIT SCOPE, RESTORE, OPEN, CLOSE, EDIT TAG and SEND
+    MIDI have their own icons; keys have a 1 px light frame (black while disabled); ADD ITEM
+    TO SHOW, EDIT TAG, SEND MIDI and the SNIP item keys are printed on their panel; the
+    toolbar keys sit at the console's places; GLOBAL moved to the right of the status bar;
+    the SHOW key reads SHOW while the show has no scenes.
+  - MONITOR: TALK A / B tabs show a speaking head; the headphones, speaker and PH+SPK icons
+    are thin outlines; PFL DIM's bar fills from the right end.
+  - METERS SETTINGS and every window's CLOSE key: a 32 px box (open at the corner where the
+    tick ends) 16 px from the right, the caption 16 px from it. Unselected tabs use 14 px
+    capitals (they were 17); chips print a little larger.
+  - USB recorder: bigger transport glyphs, 14 px 2-CH / 4-CH and 16 / 24 bit keys.
+  - VIEW: the layer title and MUTE GROUPS title are #585858; CONFIG's fields use the
+    console's 14 / 20 px caption and value.
+- HOME and the channel processing screens matched to screenshots of a WING (firmware 3.1),
+  side by side at 1280 x 800:
+  - GATE / COMP: the ENVELOPE centres the hold on the graph (it centred the whole shape, so
+    the gate's sat 39 px left of the console's) with the WING's 8 px under its title; the
+    transfer graph's level labels sit 8 px left of the plot, the threshold line starts right
+    of the meter, the threshold handle is 39 px across at the edge; RATIO and KNEE in the
+    console's amber (#f8c430), ATTACK / HOLD / RELEASE in its #18e460; a list RATIO reads
+    "3:1" on the parameter bar as the console shows it ("2.5:1", "1.43:1" keep their digits).
+  - The model list's GATE / DUCKER / COMPRESSOR / EXPANDER tiles are miniatures of the slot
+    screen: a thin grey curve with an orange stretch, the threshold handle, a black ENVELOPE
+    with its handles. Model names sit 2 px higher.
+  - Fields: values in the console's heavier weight (knob boxes too), the drop-down triangle
+    20 x 11 px light grey, the ">" key 14 x 24 px with 3 px strokes (also INS's key beside
+    FX PROCESSOR). Screen keys have the console's black frame (2-3 px; 4 px round a slot's ON).
+  - Drop-down lists (FILTER TYPE, XOVER MODE ...): rows #101010 in a 2 px #707070 frame, the
+    chosen one gold 2 px inside its row, names in 14 px light grey capitals, as wide as the field.
+  - FILTER SETUP: TOOL FILTER keys stacked in 2 px frames with the name centred right of the
+    icon, a smaller TOOL FILTER caption, a larger page title and CLOSE (also the key filter and
+    XOVER pages). EQ: unselected band names grey (#707070), as on the console.
+  - The source tile (overview, CHANNEL INPUT, COPY's source) in a 4 px black frame; inside it
+    the icon, signal ring, 48V / MUTE chips and port name where the console has them; a bolder
+    +48V icon. The insert tap's grey line shows on the slot screens' block column too; the tap
+    is a rounded square.
+  - ICON/COLOR, NAME and TAGS: LEVEL exactly where the overview has it; a smaller footnote.
+  - CHANNEL INIT / COPY: scope keys with the console's icons (plug, gear, band, the block keys'
+    GATE / DYN / EQ / INS art, fader cap, knob) over SemiBold captions, framed only while off;
+    destination tiles 60 px on a 66 px pitch with the channel's (or its source's) icon; the INIT
+    / COPY key grey in a light grey frame.
+  - SELECT FX PROCESSOR and the FX TYPE list over INS keep square WING pixels (they were
+    squashed to the HOME page's height), with the console's type sizes. SELECT CHANNEL (KEY
+    SOURCE): title and CLOSE in the console's sizes.
+- FX pages measured from the manual's figures of the console's pages (chapter 11) and a
+  real WING's EFFECTS screens: GATED and REVERSE REVERB (the WING digital reverb with its
+  LCD, red value display and bar knobs), DELAY/REVERB ("Dual FX"), SHIMMER, SPRING,
+  VINTAGE ROOM (value tiles round the data wheel), VINTAGE REVERB (levers and LED ladders
+  you click), VSS3 (TC ICON remote: six faders, the preset wheel and the MAIN / ER / TAIL /
+  MOD layers), DIMENSION CRS, STEREO FLANGER, ULTRATAP, TAPE DELAY, OILCAN, BBD, STEREO and
+  DUAL PITCH, GRAPHIC EQ (TRUE CURVE switch on both pages), PIA 560, DOUBLE VOCAL, PITCH FIX
+  (note keys), PRECISION LIMITER, 2-BAND DEESSER, C5-COMBINATOR (band screen; touch a band
+  to edit it), ULTRA ENHANCER, EXCITER, PSYCHO BASS, ROTARY, PHASER and TREMOLO/PANNER
+  (attack-hold-release graph), TAPE MACHINE, MOOD FILTER, SUB OCTAVER, SUB MONSTER, VELVET
+  IMAGER, SPEAKER MANAGER (FILTER / DYN EQ / LIMITER), the five guitar amps and BODYREZ.
+- The channel strips (EVEN, SOUL, VINTAGE, BUS CHANNEL, MASTERING) show each section as the
+  unit it recreates (Even 88 gate, SOUL 9000, 76 limiter, Pulsar, LA leveler, Warmth, Bus
+  comp, Tape, Mach EQ4, Enhancer, Precision limiter), a tab per section; their FX menu
+  tiles are tinted collages of those panels, as on the console.
+- The FX menu's HALL, ROOM, CHAMBER, PLATE, CONCERT and AMBIENCE tiles show the program's
+  letters ("HA", "RO"...) and EXTERNAL shows the EXTERNAL EFFECT page, as on a WING.
+- The EXTERNAL EFFECT page follows Fig. 169: SEND, FX MODE (MONO / STEREO / MID/SIDE rows,
+  the mode in use green), RETURN, the meters' scales either side.
+- An FX rack tile shows the control a WING shows: REVERSE RISE, DELAY/REVERB TIME, SPEAKER
+  MANAGER TILT F, PRECISION LIMITER SQUEEZE, ROTARY SPD CTL, TAPE MACHINE DRIVE, PITCH FIX
+  AMOUNT.
+- The knob last touched on an FX page is framed by corner brackets, as on the console.
 
 - A new EXTERNAL (EXT) effect starts at FX MODE ST and LATENCY 45, as on the WING (checked
   by a WING owner and in WING Edit 3.3.4); it started at M and 0. A plugin hosted in the
