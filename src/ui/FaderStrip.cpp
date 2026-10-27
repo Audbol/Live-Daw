@@ -2,6 +2,7 @@
 #include "dsp/DspUtils.h"
 #include "engine/MidiRemote.h"
 #include "engine/Models.h"
+#include "ui/ModelParams.h"
 #include "ui/ScreenWidgets.h"
 
 #include <optional>
@@ -348,11 +349,10 @@ void FaderStrip::bindControls()
 
 void FaderStrip::pressSelect()
 {
-    // DCA SPILL: selecting a DCA shows its strips on the left section (the
-    // center for a DCA on the right section); again ends the spill. The
-    // COMPACT's is DCA SELECT SPILL (its DCA SPILL ON SELECT is the DCA keys').
-    const auto* spillKey = ctx.consoleModel == ConsoleModel::Compact ? uiprefs::compactDcaSelectSpill : uiprefs::dcaSpill;
-    if (dca >= 0 && ctx.settings.getBoolValue (spillKey, false))
+    // DCA SPILL (the COMPACT's DCA SPILL ON SELECT): selecting a DCA shows its
+    // strips on the left section (the center for a DCA on the right section);
+    // again ends the spill.
+    if (dca >= 0 && ctx.settings.getBoolValue (uiprefs::dcaSpill, false))
     {
         toggleSpill (ctx, section, { LayerSet::Spill::Kind::Dca, dca, {} });
         return;
@@ -459,7 +459,7 @@ void FaderStrip::timerCallback()
     std::array<int, 2> lit {};
 
     if (fxp)
-        value = models::model (models::Fx, fxp->model).params[(size_t) fxp->index].display (fxp->value->load());
+        value = consoleText (models::model (models::Fx, fxp->model).params[(size_t) fxp->index], fxp->value->load());
     else if (midi)
         value = juce::String (midiValue());
     else if (auto* p = faderParam())

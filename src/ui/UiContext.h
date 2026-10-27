@@ -280,7 +280,9 @@ namespace uiprefs
     constexpr const char* rightSectionSof = "ui.rightSectionSof";    // on: ALL; off (default, L/C): the left and center sections only
     constexpr bool rightSectionSofDefault = false;
     constexpr const char* userLayerLink[2] = { "ui.userLayerLinkLC", "ui.userLayerLinkCR" };
-    constexpr const char* dcaSpill = "ui.dcaSpill"; // bool: SELECT on a DCA spills it (SETUP > SURFACE)
+    // bool: SELECT on a DCA strip spills it (SETUP > SURFACE: the WING's DCA SPILL, the COMPACT's
+    // DCA SPILL ON SELECT; /$ctl/cfg/dcaspill, off at first).
+    constexpr const char* dcaSpill = "ui.dcaSpill";
     constexpr const char* autoSelect[3] = { "ui.autoSelectL", "ui.autoSelectC", "ui.autoSelectR" };
     // The WING COMPACT's CH AUTOSELECT (/$ctl/cfg/autosel_CMPCT, "Compact Layer"): its one fader section.
     constexpr const char* autoSelectCompact = "ui.autoSelectCompact";
@@ -292,13 +294,14 @@ namespace uiprefs
     // SETUP > SURFACE on a COMPACT (WING manual 5.5): KEEP MAIN FADER (/$ctl/cfg/mfdrkeep, the
     // 16 keys leave fader 13 alone); BUS / MAIN / MATRIX SPILL (busspill, mainspill, mtxspill:
     // on, a key's press spills its bus, main or matrix and a hold turns on Sends on Fader; off
-    // the other way round; factory off, off, on); USE DCA BUTTONS 1-16 AS CC (dcacc). DCA SPILL
-    // ON SELECT is the full-size console's DCA SPILL setting (dcaSpill, /$ctl/cfg/dcaspill: "1:
-    // push->dca spill, 0: push->dca show"); DCA SELECT SPILL, a DCA strip's SELECT spills it,
-    // has no node (compactDcaSelectSpill).
+    // the other way round; factory off, off, on); USE DCA BUTTONS 1-16 AS CC (dcacc). The COMPACT
+    // has one DCA spill setting (a WING COMPACT's owner), DCA SPILL ON SELECT: dcaSpill above, the
+    // full-size console's DCA SPILL. A DCA key always spills its DCA and puts it on fader 13.
+    // Settings saved before keep their "ui.compactDcaSelectSpill" (Sidecar's own DCA SELECT
+    // SPILL row, now gone): on, it turns DCA SPILL ON SELECT on (CompactSection).
     constexpr const char* compactBusSpill = "ui.compactBusSpill";
     constexpr bool compactBusSpillDefault = false;
-    constexpr const char* compactDcaSelectSpill = "ui.compactDcaSelectSpill";
+    constexpr const char* legacyCompactDcaSelectSpill = "ui.compactDcaSelectSpill";
     constexpr const char* compactKeepMainFader = "ui.compactKeepMainFader";
     constexpr const char* compactMainSpill = "ui.compactMainSpill";
     constexpr bool compactMainSpillDefault = false;

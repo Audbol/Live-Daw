@@ -126,6 +126,12 @@ public:
     static void chooseEq (juce::Component& anchor, models::Table t, int current, std::function<void (int)> onSelect,
                           const juce::StringArray& allowed = {});
 
+    /** A dynamics model list tile: a fixed picture of model `m` at its
+        factory values (the WING's list doesn't follow the strip's values). */
+    static void paintDynamicsModelTile (juce::Graphics&, juce::Rectangle<float>, int m);
+    /** The values a dynamics model's list tile is drawn with: its defaults. */
+    static std::vector<float> modelTileValues (int m);
+
     /** The WING EQ's picture in the model list: an amber curve through its band rings. */
     static void paintWingEqTile (juce::Graphics&, juce::Rectangle<float>);
 

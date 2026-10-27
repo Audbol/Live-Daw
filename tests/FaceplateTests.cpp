@@ -2,6 +2,7 @@
 #include "ui/Faceplate.h"
 #include "ui/FaceplateDesign.h"
 #include "ui/LookAndFeel.h"
+#include "ui/DynamicsGraph.h"
 #include "ui/ModelParams.h"
 
 #include <juce_core/juce_core.h>
@@ -126,6 +127,44 @@ public:
             expectEquals (ratioText ("EXP", 5), juce::String ("1:2"));
             expectEquals (ratioText ("9000C", 1), juce::String ("1.43:1"));
             expectEquals (ratioText ("DEQ", 0), juce::String ("1.2:1"));
+        }
+
+        beginTest ("The dynamics model list's tiles are fixed pictures at the model's factory values");
+        {
+            for (const char* token : { "GATE", "DUCK", "COMP", "EXP" })
+            {
+                const int m = models::findModel (models::Dynamics, token);
+                expect (m >= 0, token);
+                if (m < 0)
+                    continue;
+                const auto& spec = models::model (models::Dynamics, m);
+                const auto values = ui::ModelSelector::modelTileValues (m);
+                for (size_t i = 0; i < spec.params.size(); ++i)
+                    expectEquals (values[i], spec.params[i].defaultValue, juce::String (token) + " " + spec.params[i].id);
+                const auto paint = [m] (const float* v)
+                {
+                    juce::Image img (juce::Image::ARGB, 120, 60, true);
+                    juce::Graphics g (img);
+                    if (v == nullptr)
+                        ui::ModelSelector::paintDynamicsModelTile (g, img.getBounds().toFloat(), m);
+                    else
+                        ui::paintDynamicsTile (g, img.getBounds().toFloat(), m, v, true);
+                    return img;
+                };
+                const auto same = [] (const juce::Image& a, const juce::Image& b)
+                {
+                    for (int y = 0; y < a.getHeight(); ++y)
+                        for (int x = 0; x < a.getWidth(); ++x)
+                            if (a.getPixelAt (x, y) != b.getPixelAt (x, y))
+                                return false;
+                    return true;
+                };
+                // A strip's own settings (a far lower threshold) draw another picture; the list's tile stays the default's.
+                auto live = values;
+                live[(size_t) spec.find ("thr")] = spec.params[(size_t) spec.find ("thr")].min;
+                expect (same (paint (nullptr), paint (values.data())), token);
+                expect (! same (paint (nullptr), paint (live.data())), token);
+            }
         }
 
         beginTest ("GRAPHIC EQ: the faders (with TRIM) and the curve are on pages of their own, TRUE CURVE on both");

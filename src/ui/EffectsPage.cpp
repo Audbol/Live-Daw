@@ -4,6 +4,7 @@
 #include "ui/Faceplate.h"
 #include "ui/FaceplateDesign.h"
 #include "ui/HomeWidgets.h"
+#include "ui/ModelParams.h"
 #include "ui/Pages.h"
 #include "ui/WingWidgets.h"
 
@@ -268,7 +269,7 @@ public:
             const float v = params.values[ringParam].load();
             mix = p.toNormalised (v);
             ringLabel = p.label.toUpperCase();
-            ringValue = p.display (v);
+            ringValue = consoleText (p, v);
         }
         const auto k = knobArea;
         const float a0 = juce::MathConstants<float>::pi * 1.2f, a1 = juce::MathConstants<float>::pi * 2.8f;

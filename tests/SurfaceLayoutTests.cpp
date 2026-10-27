@@ -1,10 +1,14 @@
+#include "ui/CustomControlsPage.h"
 #include "ui/SurfaceLayout.h"
+#include "ui/UiContext.h"
 
 #include <juce_core/juce_core.h>
 
 #include <vector>
 
 using namespace livedaw::ui::layout;
+namespace cc = livedaw::ui::cc;
+namespace uiprefs = livedaw::ui::uiprefs;
 
 class SurfaceLayoutTests final : public juce::UnitTest
 {
@@ -133,13 +137,13 @@ public:
             for (int key = 4; key < 8; ++key)
                 expect (! compact::keyMainFader (KM::Main, key).has_value(), "MAIN MATRIX key " + juce::String (key + 1));
             for (int key = 0; key < 16; ++key)
-                expect (! compact::keyMainFader (KM::Dca, key) && ! compact::keyMainFader (KM::User, key));
+                expect (! compact::keyMainFader (KM::User, key));
             expect (! compact::keyMainFader (KM::Bus, 16).has_value());
-            // DCA SPILL ON SELECT off (/$ctl/cfg/dcaspill "0: push->dca show"): a DCA key
-            // puts its DCA on fader 13.
-            expect (compact::keyMainFader (KM::Dca, 0, true) == MF { MF::Dca, 1 });
-            expect (compact::keyMainFader (KM::Dca, 15, true) == MF { MF::Dca, 16 });
-            expect (! compact::keyMainFader (KM::User, 0, true).has_value());
+            // A DCA key puts its DCA on fader 13 (and spills it, dcaActions), whatever
+            // DCA SPILL ON SELECT says [a WING COMPACT's owner].
+            expect (compact::keyMainFader (KM::Dca, 0) == MF { MF::Dca, 1 });
+            expect (compact::keyMainFader (KM::Dca, 15) == MF { MF::Dca, 16 });
+            expect (! compact::keyMainFader (KM::Dca, 16).has_value());
         }
 
         beginTest ("The COMPACT's custom control key sets");
@@ -161,6 +165,23 @@ public:
             expect (compact::keyControl (KM::Dca, 14, true) == KC { compact::kFirstDcaSet + 3, 2 });
             expect (! compact::keyControl (KM::Bus, 2, true).has_value());
             expect (! compact::keyControl (KM::User, 16, false).has_value());
+            // DAW mode: every key plays the DAW KEYS sets, whatever the mode; the mode
+            // keys the set DAW MODE KEYS (Sidecar's sets after D1-D4).
+            for (auto m : { KM::Bus, KM::Dca, KM::Main, KM::User })
+            {
+                expect (compact::keyControl (m, 0, false, true) == KC { compact::kFirstDawSet, 0 });
+                expect (compact::keyControl (m, 6, true, true) == KC { compact::kFirstDawSet + 1, 2 });
+                expect (compact::keyControl (m, 15, false, true) == KC { compact::kFirstDawSet + 3, 3 });
+            }
+            expect (! compact::keyControl (KM::Bus, 16, false, true).has_value());
+            expect (compact::modeKeyControl (0) == KC { compact::kSetDawModeKeys, 0 });
+            expect (compact::modeKeyControl (3) == KC { compact::kSetDawModeKeys, 3 });
+            expect (! compact::modeKeyControl (4).has_value());
+            // The sets map to the stored layers after DCA 13-16, and start empty.
+            expectEquals (cc::kFirstCompactUserLayer + compact::kFirstDawSet, cc::kFirstCompactDawLayer);
+            expectEquals (cc::kFirstCompactUserLayer + compact::kSetDawModeKeys, cc::kCompactDawModeLayer);
+            expectEquals (cc::kCompactDawModeLayer + 1, cc::kNumStoredLayers);
+            expect (cc::isCompactLayer (cc::kCompactDawModeLayer) && ! cc::hasLowerKeys (cc::kFirstCompactDawLayer));
         }
 
         beginTest ("BUS, MAIN and MATRIX keys: press and hold");
@@ -182,6 +203,16 @@ public:
             expect (is (compact::mainMatrixActions (9, false, false), A::Sends, A::Spill));
             // Keys 5-8 are custom controls.
             expect (is (compact::mainMatrixActions (5, false, true), A::None, A::None));
+            // Factory settings [a WING COMPACT's owner]: a MATRIX key spills on a press and
+            // turns on Sends on Fader on a hold; MAIN and BUS keys the other way round.
+            const bool mainSpill = uiprefs::compactMainSpillDefault, matrixSpill = uiprefs::compactMatrixSpillDefault;
+            for (int key = 8; key < 16; ++key)
+                expect (is (compact::mainMatrixActions (key, mainSpill, matrixSpill), A::Spill, A::Sends), "MATRIX key " + juce::String (key + 1));
+            for (int key = 0; key < 4; ++key)
+                expect (is (compact::mainMatrixActions (key, mainSpill, matrixSpill), A::Sends, A::Spill), "MAIN key " + juce::String (key + 1));
+            expect (is (compact::busActions (uiprefs::compactBusSpillDefault), A::Sends, A::Spill));
+            // A DCA key, pressed or held: spills the DCA (and puts it on fader 13).
+            expect (is (compact::dcaActions(), A::Spill, A::Spill));
         }
     }
 };

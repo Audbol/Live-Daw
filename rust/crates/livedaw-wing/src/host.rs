@@ -123,7 +123,8 @@ pub const HOST_SETTINGS: &[HostSetting] = &[
     // spills (and its hold turns on Sends on Fader) or the other way round
     // (factory: BUS and MAIN send on a press, MATRIX spills); USE DCA BUTTONS
     // 1-16 AS CC, the DCA keys play the sets DCA 1-4 .. 13-16. DCA SPILL ON
-    // SELECT is `dcaspill` above (a DCA key's press spills, else it shows the DCA).
+    // SELECT, the COMPACT's one DCA spill setting, is `dcaspill` above (a DCA
+    // strip's SELECT spills it; a DCA key always spills and shows its DCA).
     s("/$ctl/cfg/mfdrkeep", "ui.compactKeepMainFader", "0", Enc::Bool),
     s("/$ctl/cfg/busspill", "ui.compactBusSpill", "0", Enc::Bool),
     s("/$ctl/cfg/mainspill", "ui.compactMainSpill", "0", Enc::Bool),

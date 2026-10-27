@@ -381,29 +381,31 @@ void ModelSelector::chooseDynamics (juce::Component& anchor, const DynSlotParams
             extra.push_back ({ spec.index, spec.name.toUpperCase() });
     if (! extra.empty())
         rows.push_back (extra);
-    // The current values draw the loaded model's tile; the others their defaults.
-    const int current = slot.model.load();
-    auto values = slotValues (slot);
-    popups::chooseTile (anchor, rows, { 2 }, current,
-                        [current, values] (juce::Graphics& g, juce::Rectangle<float> r, int m)
-                        {
-                            if (hasTransferGraph (m))
-                            {
-                                std::vector<float> v (values.size(), 0.0f);
-                                if (m == current)
-                                    v = values;
-                                else
-                                {
-                                    const auto& spec = models::model (models::Dynamics, m);
-                                    for (size_t i = 0; i < spec.params.size() && i < v.size(); ++i)
-                                        v[i] = spec.params[i].defaultValue;
-                                }
-                                paintDynamicsTile (g, r, m, v.data(), true); // orange whether the slot is on or not [3.1]
-                            }
-                            else
-                                Faceplate::paintThumbnail (g, r, models::Dynamics, m, {});
-                        },
+    // Every tile is a fixed picture of its model at the factory values, the
+    // loaded model's too: the list doesn't follow the strip's settings.
+    popups::chooseTile (anchor, rows, { 2 }, slot.model.load(),
+                        [] (juce::Graphics& g, juce::Rectangle<float> r, int m) { paintDynamicsModelTile (g, r, m); },
                         std::move (onSelect));
+}
+
+std::vector<float> ModelSelector::modelTileValues (int m)
+{
+    std::vector<float> v ((size_t) ld::kMaxDynParams, 0.0f);
+    const auto& spec = models::model (models::Dynamics, m);
+    for (size_t i = 0; i < spec.params.size() && i < v.size(); ++i)
+        v[i] = spec.params[i].defaultValue;
+    return v;
+}
+
+void ModelSelector::paintDynamicsModelTile (juce::Graphics& g, juce::Rectangle<float> r, int m)
+{
+    if (hasTransferGraph (m))
+    {
+        const auto v = modelTileValues (m);
+        paintDynamicsTile (g, r, m, v.data(), true); // orange whether the slot is on or not [3.1]
+    }
+    else
+        Faceplate::paintThumbnail (g, r, models::Dynamics, m, {});
 }
 
 void ModelSelector::chooseEq (juce::Component& anchor, models::Table t, int current, std::function<void (int)> onSelect,

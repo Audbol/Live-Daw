@@ -1,4 +1,5 @@
 #include "ui/Knobs.h"
+#include "ui/ModelParams.h"
 
 namespace livedaw::ui
 {
@@ -114,7 +115,7 @@ KnobBinding bindModelParam (std::atomic<float>& v, const models::Param& p)
     b.label = p.label;
     b.get = [&v, p] { return p.toNormalised (v.load()); };
     b.set = [&v, p] (float pos) { v.store (p.fromNormalised (pos)); };
-    b.text = [&v, p] { return p.display (v.load()); };
+    b.text = [&v, p] { return consoleText (p, v.load()); }; // a list RATIO reads "3:1" everywhere
     b.reset = [&v, p] { v.store (p.defaultValue); };
     b.bipolar = p.min < 0.0f && p.max > 0.0f && p.isContinuous();
     if (p.isStepped() && p.steps > 1)
