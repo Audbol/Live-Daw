@@ -261,6 +261,7 @@ All notable changes to Sidecar are listed here. Versions follow
   the alternative one). Before, a press switched SOF in both modes.
 - VIEW > FADERS: AUTO RIDER in the COMP slot shows its square, lit while it rides
   (manual 5.8 p. 63).
+
 ### Changed
 
 - Display screens matched to screenshots of a WING (firmware 3.1), side by side at 1280 x 800:
@@ -291,6 +292,37 @@ All notable changes to Sidecar are listed here. Versions follow
   - USB recorder: bigger transport glyphs, 14 px 2-CH / 4-CH and 16 / 24 bit keys.
   - VIEW: the layer title and MUTE GROUPS title are #585858; CONFIG's fields use the
     console's 14 / 20 px caption and value.
+- HOME and the channel processing screens matched to screenshots of a WING (firmware 3.1),
+  side by side at 1280 x 800:
+  - GATE / COMP: the ENVELOPE centres the hold on the graph (it centred the whole shape, so
+    the gate's sat 39 px left of the console's) with the WING's 8 px under its title; the
+    transfer graph's level labels sit 8 px left of the plot, the threshold line starts right
+    of the meter, the threshold handle is 39 px across at the edge; RATIO and KNEE in the
+    console's amber (#f8c430), ATTACK / HOLD / RELEASE in its #18e460; a list RATIO reads
+    "3:1" on the parameter bar as the console shows it ("2.5:1", "1.43:1" keep their digits).
+  - The model list's GATE / DUCKER / COMPRESSOR / EXPANDER tiles are miniatures of the slot
+    screen: a thin grey curve with an orange stretch, the threshold handle, a black ENVELOPE
+    with its handles. Model names sit 2 px higher.
+  - Fields: values in the console's heavier weight (knob boxes too), the drop-down triangle
+    20 x 11 px light grey, the ">" key 14 x 24 px with 3 px strokes (also INS's key beside
+    FX PROCESSOR). Screen keys have the console's black frame (2-3 px; 4 px round a slot's ON).
+  - Drop-down lists (FILTER TYPE, XOVER MODE ...): rows #101010 in a 2 px #707070 frame, the
+    chosen one gold 2 px inside its row, names in 14 px light grey capitals, as wide as the field.
+  - FILTER SETUP: TOOL FILTER keys stacked in 2 px frames with the name centred right of the
+    icon, a smaller TOOL FILTER caption, a larger page title and CLOSE (also the key filter and
+    XOVER pages). EQ: unselected band names grey (#707070), as on the console.
+  - The source tile (overview, CHANNEL INPUT, COPY's source) in a 4 px black frame; inside it
+    the icon, signal ring, 48V / MUTE chips and port name where the console has them; a bolder
+    +48V icon. The insert tap's grey line shows on the slot screens' block column too; the tap
+    is a rounded square.
+  - ICON/COLOR, NAME and TAGS: LEVEL exactly where the overview has it; a smaller footnote.
+  - CHANNEL INIT / COPY: scope keys with the console's icons (plug, gear, band, the block keys'
+    GATE / DYN / EQ / INS art, fader cap, knob) over SemiBold captions, framed only while off;
+    destination tiles 60 px on a 66 px pitch with the channel's (or its source's) icon; the INIT
+    / COPY key grey in a light grey frame.
+  - SELECT FX PROCESSOR and the FX TYPE list over INS keep square WING pixels (they were
+    squashed to the HOME page's height), with the console's type sizes. SELECT CHANNEL (KEY
+    SOURCE): title and CLOSE in the console's sizes.
 - A new EXTERNAL (EXT) effect starts at FX MODE ST and LATENCY 45, as on the WING (checked
   by a WING owner and in WING Edit 3.3.4); it started at M and 0. A plugin hosted in the
   slot still uses its own reported latency.

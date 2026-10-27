@@ -32,7 +32,7 @@ namespace
     }
 
     /** A dynamics parameter on the parameter bar as the console colours it
-        (Fig. 92-94): thresholds white, ratio and knee yellow, times green
+        (Fig. 92-94): thresholds white, ratio and knee amber, times green
         (each as a thumb on a grey line), ranges and gains as a blue fill. */
     KnobStyle dynamicsStyle (const models::Param& p, juce::Component* target)
     {
@@ -41,10 +41,10 @@ namespace
         if (id == "thr" || id.endsWith ("thr") || label.startsWith ("THR"))
             return styleOf (KnobStyle::Bar::Thumb, KnobColours::white, target);
         if (id.contains ("ratio") || id == "knee" || label == "RATIO" || label == "KNEE")
-            return styleOf (KnobStyle::Bar::Thumb, KnobColours::yellow, target);
+            return styleOf (KnobStyle::Bar::Thumb, KnobColours::dynYellow, target);
         if (p.unit == "ms" || p.unit == "seconds" || label.contains ("ATTACK") || label.contains ("RELEASE") || label.contains ("HOLD")
             || label.contains ("REC"))
-            return styleOf (KnobStyle::Bar::Thumb, KnobColours::timeGreen, target);
+            return styleOf (KnobStyle::Bar::Thumb, KnobColours::qGreen, target); // the gate's and COMP's #18e460 [3.1]
         if (id == "range" || id == "depth" || (p.unit == "dB" && p.isContinuous()))
             return styleOf (KnobStyle::Bar::Fill, KnobColours::blue, target);
         return styleOf (KnobStyle::Bar::Auto, {}, target);
@@ -156,10 +156,11 @@ juce::Rectangle<int> HomeScreen::layoutLevelPanel (juce::Rectangle<int> area)
 {
     if (levelPanel != nullptr)
     {
-        const auto levelArea = area.removeFromRight (area.getWidth() * 22 / 100);
+        // Where the overview has it: WING x 1056-1272, y 152-752 [3.1].
+        const auto levelArea = panelAt (1056.0f, 152.0f, 216.0f, 600.0f);
         box (levelArea, "LEVEL");
         levelPanel->setBounds (sectionBody (levelArea, true));
-        area.removeFromRight (juce::jmax (4, getParentWidth() / 160));
+        area.setRight (juce::jmin (area.getRight(), levelArea.getX()));
     }
     return area;
 }
@@ -741,6 +742,57 @@ void paintInputSourceTile (juce::Graphics& g, juce::Rectangle<float> r, MixerEng
     const float screenH = getWingScreenHeight();
     // Small tiles (small windows) keep the icon and the port only.
     const bool roomy = r.getHeight() >= 44.0f && r.getWidth() >= 64.0f;
+    // The 104 px tile of Channel Home and CHANNEL INPUT, measured on a 3.1
+    // console (inside its black frame): the colour bar 20 px, the icon 28 px
+    // across centred at (23, 50), the signal ring 14.5 px 7 px from the right
+    // and 25 px down, the 48V / MUTE chips 37 x 13 from x 62 at y 44 and 61,
+    // the line at y 79 and the port name in 12.7 px capitals under it.
+    if (roomy && r.getWidth() >= wingPx (90.0f))
+    {
+        const auto t = r;
+        const float u = t.getWidth() / 104.0f, v = t.getHeight() / 104.0f;
+        auto at = [&t, u, v] (float x, float y, float w, float h) { return juce::Rectangle<float> (t.getX() + x * u, t.getY() + y * v, w * u, h * v); };
+        const auto bar = at (0.0f, 0.0f, 104.0f, 20.0f);
+        g.setColour (colour);
+        g.fillRect (bar);
+        g.setColour (colour.getPerceivedBrightness() > 0.45f ? juce::Colours::black : juce::Colours::white);
+        g.setFont (homeFont (TypeScale::body * 1.05f, bar.getHeight() * 0.7f, WingWeight::SemiBold));
+        g.drawFittedText (name, bar.toNearestInt().reduced (2, 0), juce::Justification::centred, 1, 0.7f);
+        g.setColour (colours::keyOff);
+        g.fillRect (t.withTrimmedTop (bar.getHeight()));
+
+        const auto iconArea = juce::Rectangle<float> (42.0f * u, 42.0f * u).withCentre (at (23.5f, 50.0f, 0.0f, 0.0f).getPosition());
+        const int icon = src != nullptr ? src->icon.load() : 0;
+        if (icon <= 0 || ! drawWingIcon (g, icon, iconArea, colours::caption))
+            drawIcon (g, sourceIcon (left), iconArea, colours::caption);
+
+        const auto ring = at (82.5f, 25.0f, 14.5f, 14.5f);
+        g.setColour (signal ? Colours::meterGreen : colours::caption);
+        if (signal)
+            g.fillEllipse (ring);
+        else
+            g.drawEllipse (ring.reduced (0.75f), juce::jmax (1.2f, 2.0f * u));
+        const bool phantom = src != nullptr && src->phantom.load();
+        const bool mute = src != nullptr && src->mute.load();
+        // (The chips' text fills them: 9.5 px SemiBold capitals.)
+        auto chip = [&g, v] (juce::Rectangle<float> c, const char* text, bool lit)
+        {
+            g.setColour (lit ? colours::mute : colours::chipOff);
+            g.fillRoundedRectangle (c, 1.5f);
+            g.setColour (lit ? colours::ink : juce::Colours::black);
+            g.setFont (fontFittingWidth (wingFontPx (9.5f * v, WingWeight::SemiBold), text, c.getWidth() - 2.0f));
+            g.drawText (text, c, juce::Justification::centred, false);
+        };
+        chip (at (62.0f, 44.0f, 37.0f, 13.0f), "48V", phantom);
+        chip (at (62.0f, 61.0f, 37.0f, 13.0f), "MUTE", mute);
+
+        g.setColour (colours::chipOff);
+        g.fillRect (at (4.0f, 78.5f, 96.0f, 1.5f));
+        g.setColour (stereo ? colours::stereo : colours::mono);
+        g.setFont (wingFontPx (12.7f * v));
+        g.drawFittedText (port, at (2.0f, 80.0f, 100.0f, 24.0f).toNearestInt(), juce::Justification::centred, 1, 0.7f);
+        return;
+    }
 
     auto bar = r.removeFromTop (juce::jmax (12.0f, r.getHeight() * 0.2f));
     g.setColour (colour);
@@ -836,7 +888,10 @@ public:
         const bool st = strip.params.stereo.load();
         const bool active = alt == strip.isUsingAltInput();
         const bool signal = active && ctx.meters.get (&strip, true, 0) > juce::Decibels::decibelsToGain (-50.0f);
-        paintInputSourceTile (g, tile.toFloat(), ctx.engine, left, right, st, signal);
+        // (In a 4 px black frame, as on the overview [3.1].)
+        g.setColour (juce::Colours::black);
+        g.fillRect (tile);
+        paintInputSourceTile (g, tile.toFloat().reduced (juce::jmax (1.5f, wingPx (4.0f))), ctx.engine, left, right, st, signal);
         if (active)
         {
             // WING 3.1: a 4 px grey frame round the column in use.
@@ -1695,13 +1750,16 @@ public:
         graph->setStrip (&strip, ResponseGraph::Filter);
         graph->setRuler (ResponseGraph::Ruler::Top);
 
-        toolCaption = &label ("TOOL FILTER", 15.0f, colours::caption);
+        toolCaption = &label ("TOOL FILTER", 13.0f, colours::caption);
         toolCaption->setJustificationType (juce::Justification::centred);
         for (int m = 0; m < (int) models::table (models::FilterTools).size(); ++m)
         {
             // Each tool lights in its colour: TILT cyan, MAXER orange, AP yellow.
             auto& k = key (toolFilterName (m), toolFilterIcon (m), toolFilterColour (m));
             k.offInk = colours::caption;
+            // Stacked in 2 px frames, the name centred 105 px into the 168 px key [3.1].
+            k.frameWingPx = 2.0f;
+            k.textCentreX = 105.0f / 168.0f;
             k.isOn = [&f, m] { return f.toolModel.load() == m; };
             k.onClick = [this, &f, m]
             {
@@ -1792,7 +1850,7 @@ public:
         g.fillRect (header);
         g.fillRect (side);
         g.setColour (colours::caption);
-        g.setFont (homeFont (TypeScale::header, (float) header.getHeight() * 0.4f));
+        g.setFont (homeFont (TypeScale::header * 1.07f, (float) header.getHeight() * 0.43f)); // a little over the panel headers [3.1]
         const int titleX = juce::roundToInt ((float) header.getWidth() * 33.0f / 1160.0f);
         g.drawText ("FILTER SETUP", header.withTrimmedLeft (titleX).withWidth (header.getWidth() * 36 / 100), juce::Justification::centredLeft, false);
     }
@@ -1840,6 +1898,7 @@ public:
     DynTab (UiContext& c, Strip& s, bool gateSlot) : HomeScreen (c, s), isGate (gateSlot), slot (gateSlot ? s.params.gate : s.params.dynamics)
     {
         on = &key ("ON", std::nullopt, colours::accent);
+        on->frameWingPx = 4.0f; // the slot's ON in its 4 px black frame [3.1]
         bindKey (*on, slot.on);
         allowed = strip.getKind() == StripKind::Aux && ! isGate ? models::list (models::AuxDynModels) : juce::StringArray();
         model = &make<ChoiceField> (isGate ? "GATE MODEL" : "DYNAMICS MODEL",
@@ -2073,7 +2132,7 @@ public:
             // The page's title over the middle of the graph [3.1].
             const auto header = bands.front();
             g.setColour (colours::caption);
-            g.setFont (homeFont (TypeScale::header, (float) header.getHeight() * 0.4f));
+            g.setFont (homeFont (TypeScale::header * 1.1f, (float) header.getHeight() * 0.44f)); // a little over the panel headers [3.1]
             g.drawText (pageTitle(), header.withWidth (header.getWidth() * 960 / 1160), juce::Justification::centred, false);
             return;
         }
@@ -2303,6 +2362,7 @@ public:
         auto& eq = strip.params.eq;
         const auto table = static_cast<models::Table> (strip.getEqTable());
         on = &key ("ON", std::nullopt, colours::accent);
+        on->frameWingPx = 4.0f; // the slot's ON in its 4 px black frame [3.1]
         bindKey (*on, eq.on);
         // The console doesn't offer the MACH EQ4 on aux channels.
         if (strip.getKind() == StripKind::Aux)
@@ -2798,6 +2858,7 @@ public:
     InsertTab (UiContext& c, Strip& s, bool postInsert) : HomeScreen (c, s), post (postInsert), ins (post ? s.params.postInsert : s.params.preInsert)
     {
         on = &key ("ON", std::nullopt, colours::accent);
+        on->frameWingPx = 4.0f; // the slot's ON in its 4 px black frame [3.1]
         bindKey (*on, ins.on);
         processor = &make<ChoiceField> ("FX PROCESSOR", [this]
                                         {
@@ -2807,7 +2868,7 @@ public:
                                         [this] (ChoiceField&) { chooseProcessor(); });
         processor->keyHidden = true; // the > key beside it is the field's key [D8]
         openSlot = &key ({}, Icon::ChevronRight);
-        openSlot->offInk = colours::ink; // [3.1] a white chevron
+        openSlot->offInk = juce::Colour (0xffc0c0c0); // [3.1] the fields' light grey chevron
         openSlot->setTooltip ("Edit the slot on EFFECTS");
         openSlot->onClick = [this]
         {
@@ -4824,8 +4885,10 @@ public:
         none.onClick = [this] { scope = 0; repaint(); };
         all.onClick = [this] { scope = (1u << kNumScopeBits) - 1u; repaint(); };
         // [Fig. 22] square keys, an icon over the caption.
-        static const Icon scopeIcons[] = { Icon::Link, Icon::Wrench, Icon::KeyboardEdit, Icon::Tag, Icon::Xlr, Icon::LowCut, Icon::Gate, Icon::Compressor, Icon::Eq,
-                                           Icon::DeltaT, Icon::Insert, Icon::Insert, Icon::Sends, Icon::Faders, Icon::GainArrows, Icon::MuteGroup, Icon::Circle };
+        // (3.1: CONN a plug, IN a gear, FILTER a band, GATE / DYN / EQ / PRE / POST
+        // as the block keys draw them, FDR a fader cap, PAN a knob.)
+        static const Icon scopeIcons[] = { Icon::Plug, Icon::Wrench, Icon::KeyboardEdit, Icon::Tag, Icon::Gear, Icon::FilterBand, Icon::Gate, Icon::Compressor, Icon::Eq,
+                                           Icon::DeltaT, Icon::Insert, Icon::Insert, Icon::Sends, Icon::Faders, Icon::FaderCap, Icon::MuteGroup, Icon::PanKnob };
         static_assert (std::size (scopeIcons) == kNumScopeBits);
         none.iconAbove = all.iconAbove = true;
         none.offColour = all.offColour = colours::tab;
@@ -4836,6 +4899,7 @@ public:
             auto* k = scopeKeys.add (new IconKey (scopeName (i) + juce::String (i == Send || i == MainBit ? juce::String::fromUTF8 (" \xe2\x96\xbe") : juce::String()),
                                                   scopeIcons[i], colours::accent));
             k->iconAbove = true;
+            k->scopeStyle = true;
             k->isOn = [this, i] { return (scope >> i) & 1u; };
             k->onClick = [this, i] { scope ^= 1u << i; };
             addAndMakeVisible (k);
@@ -4858,8 +4922,11 @@ public:
         }
         for (juce::Component* comp : { (juce::Component*) &none, (juce::Component*) &all, (juce::Component*) &action })
             addAndMakeVisible (comp);
-        action.outlined = true;
+        // (3.1: a #303030 key in a 1 px light grey frame, the name centred right of the icon.)
+        action.offColour = colours::keyOff;
+        action.frame = colours::caption;
         action.offInk = colours::caption;
+        action.textCentreX = 95.0f / 144.0f;
         updateTabs();
         // [Fig. 22] a window over the dimmed page, 788 x 654 of the 1280 x 720 page.
         setPlacement (OverlayPlacement::centred (788.0f / 1280.0f, 654.0f / 720.0f));
@@ -4885,9 +4952,10 @@ public:
         if (copy)
             if (auto* src = state::findStrip (ctx.engine, source))
             {
-                paintStripTile (g, sourceTile.toFloat(), *src, false);
-                g.setColour (colours::accent);
-                g.drawRect (sourceTile.toFloat(), 2.0f);
+                // (3.1: in a 4 px black frame, as the overview's source tile.)
+                g.setColour (juce::Colours::black);
+                g.fillRect (sourceTile);
+                paintStripTile (g, sourceTile.toFloat().reduced (juce::jmax (1.5f, wingPx (4.0f))), *src, false);
             }
 
         // The destination tiles: 64 x 78 on a 66 x 83 pitch.
@@ -4903,7 +4971,7 @@ public:
         for (int i = 0; i < n; ++i)
         {
             auto r = juce::Rectangle<float> ((float) grid.getX() + (float) (i % columns) * w, (float) grid.getY() + (float) (i / columns) * h, w, h)
-                         .reduced (w / 66.0f, h * 2.5f / 83.0f);
+                         .reduced (w * 3.0f / 66.0f, h * 2.5f / 83.0f); // 60 px tiles on a 66 px pitch [3.1]
             const auto ref = state::StripRef::of (*list[(size_t) i]);
             const bool sel = std::find (destinations.begin(), destinations.end(), ref) != destinations.end();
             const bool isSource = copy && ref == source;
@@ -5021,8 +5089,14 @@ private:
         g.setFont (wingFontPx (number.getHeight() * 0.62f));
         g.drawText (s.isInput() ? juce::String (s.getNumber()) : shortLabel (s), number, juce::Justification::centred, false);
         auto iconArea = body.reduced (2.0f).withSizeKeepingCentre (juce::jmin (body.getWidth(), body.getHeight()), juce::jmin (body.getWidth(), body.getHeight()) - 2.0f);
-        if (! drawWingIcon (g, s.getIcon(), iconArea, colours::caption) && ! s.isInput())
-            drawIcon (g, stripIcon (s.getKind()), iconArea.reduced (iconArea.getHeight() * 0.1f), colours::dim);
+        // (As the status bar: a linked source's own glyph when the strip has no icon [3.1].)
+        if (! drawWingIcon (g, s.getIcon(), iconArea, colours::caption))
+        {
+            if (s.linkedSource() != nullptr)
+                drawIcon (g, sourceIcon (s.getActiveInputLeft()), iconArea.reduced (iconArea.getHeight() * 0.12f), colours::caption);
+            else if (! s.isInput())
+                drawIcon (g, stripIcon (s.getKind()), iconArea.reduced (iconArea.getHeight() * 0.1f), colours::dim);
+        }
         if (selected || isSource)
         {
             // [Fig. 22] a light grey frame round a chosen tile and the source (COPY).

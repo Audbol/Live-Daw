@@ -153,13 +153,87 @@ void paintTransferThumb (juce::Graphics& g, juce::Rectangle<float> r, int model,
     g.fillEllipse (juce::Rectangle<float> (d, d).withCentre ({ plot.getRight(), thrPoint.y }));
 }
 
+namespace
+{
+    /** The stretch of the curve the model list draws orange (input dB), as
+        the console's miniatures of its own models show it [3.1]. */
+    juce::Range<float> thumbHighlight (int model, float thr, float range)
+    {
+        const auto& t = tokenOf (model);
+        if (t == "GATE")
+            return { -33.0f, -19.0f };
+        if (t == "COMP")
+            return { -32.0f, -18.0f };
+        if (t == "EXP")
+            return { -range, thr };
+        if (t == "DUCK")
+            return { thr - 2.0f, thr + 12.0f };
+        return { -range, 0.0f };
+    }
+} // namespace
+
 void paintDynamicsTile (juce::Graphics& g, juce::Rectangle<float> r, int model, const float* values, bool on)
 {
+    // The model list's miniature of the slot screen [3.1]: the transfer graph
+    // (dots, a thin grey curve with an orange stretch, the threshold line and
+    // its handle at the right) and the ENVELOPE (its small white title, the
+    // shape with its handles), both on black.
+    juce::ignoreUnused (on);
     g.setColour (juce::Colours::black);
     g.fillRect (r);
-    auto left = r.removeFromLeft (r.getWidth() * 0.48f);
-    paintTransferThumb (g, left, model, values, on ? curveOn : curveOff); // the model list draws it orange [3.1]
-    r.removeFromLeft (2.0f);
+    auto left = r.removeFromLeft (r.getWidth() * 0.5f);
+    {
+        const float range = transferRangeDb (model);
+        auto plot = left.reduced (left.getWidth() * 0.06f, left.getHeight() * 0.08f);
+        plot = plot.withWidth (juce::jmin (plot.getWidth() * 0.86f, plot.getHeight() * 1.15f));
+        paintDots (g, plot, plot.getWidth() / 6.0f, plot.getHeight() / 4.0f, 1.0f, juce::Colour (0xff303030));
+        const auto curve = transferCurve (model, values, 81);
+        auto pointAt = [&] (float in, float out)
+        {
+            return juce::Point<float> (plot.getX() + plot.getWidth() * (in + range) / range,
+                                       plot.getBottom() - plot.getHeight() * juce::jlimit (0.0f, 1.0f, (out + range) / range));
+        };
+        const auto& spec = models::model (models::Dynamics, model);
+        const int ti = spec.find ("thr");
+        const float thr = ti >= 0 ? values[ti] : -20.0f;
+        const float handleX = left.getRight() - left.getWidth() * 0.12f;
+        const auto thrY = pointAt (thr, thr).y;
+        g.setColour (thresholdLine);
+        g.fillRect (juce::Rectangle<float> (plot.getX(), thrY - 0.5f, handleX - plot.getX(), 1.0f));
+        if (! curve.empty())
+        {
+            const auto hi = thumbHighlight (model, thr, range);
+            juce::Path all, lit;
+            bool litStarted = false;
+            for (size_t i = 0; i < curve.size(); ++i)
+            {
+                const float in = -range + range * (float) i / (float) (curve.size() - 1);
+                const auto pt = pointAt (in, curve[i]);
+                if (i == 0)
+                    all.startNewSubPath (pt);
+                else
+                    all.lineTo (pt);
+                if (in >= hi.getStart() - 0.01f && in <= hi.getEnd() + 0.01f)
+                {
+                    if (! litStarted)
+                        lit.startNewSubPath (pt);
+                    else
+                        lit.lineTo (pt);
+                    litStarted = true;
+                }
+            }
+            g.saveState();
+            g.reduceClipRegion (plot.expanded (1.0f).toNearestInt());
+            const float w = juce::jmax (1.0f, left.getHeight() * 0.022f);
+            g.setColour (curveOff);
+            g.strokePath (all, juce::PathStrokeType (w));
+            g.setColour (curveOn);
+            g.strokePath (lit, juce::PathStrokeType (w * 1.6f));
+            g.restoreState();
+        }
+        const float d = juce::jmax (4.0f, left.getHeight() * 0.13f);
+        paintHandle (g, juce::Rectangle<float> (d, d).withCentre ({ handleX, thrY }));
+    }
     const auto& spec = models::model (models::Dynamics, model);
     auto norm = [&] (const char* id)
     {
@@ -170,10 +244,10 @@ void paintDynamicsTile (juce::Graphics& g, juce::Rectangle<float> r, int model, 
         return p.toNormalised (values[i]);
     };
     auto title = r.removeFromTop (r.getHeight() * 0.2f);
-    g.setColour (axisText);
-    g.setFont (wingFontPx (juce::jmax (4.0f, title.getHeight() * 0.5f)));
+    g.setColour (juce::Colour (0xffd8d8d8));
+    g.setFont (wingFontPx (juce::jmax (3.0f, title.getHeight() * 0.42f), WingWeight::SemiBold));
     g.drawText ("ENVELOPE", title, juce::Justification::centred, false);
-    DynEnvelopeGraph::paintShape (g, r.reduced (1.0f, 0.0f), norm ("att"), norm ("hld"), norm ("rel"), greenEnvelope (model), false);
+    DynEnvelopeGraph::paintShape (g, r.reduced (1.0f, 0.0f), norm ("att"), norm ("hld"), norm ("rel"), greenEnvelope (model), true, true);
 }
 
 //==============================================================================
@@ -257,8 +331,9 @@ juce::Rectangle<float> DynTransferGraph::handleArea() const
 {
     const int ti = thresholdIndex();
     const float thr = ti >= 0 ? slot.values[ti].load() : 0.0f;
-    const float d = juce::jlimit (14.0f, 40.0f, getHeight() * 0.075f);
-    return juce::Rectangle<float> (d, d).withCentre ({ (float) getWidth() - d * 0.5f - 2.0f, yFor (thr) });
+    // WING 3.1 (a 480 px tall panel): 39 px across, flush with the right edge.
+    const float d = juce::jlimit (14.0f, juce::jmax (14.0f, wingPx (39.0f)), getHeight() * 39.0f / 480.0f);
+    return juce::Rectangle<float> (d, d).withCentre ({ (float) getWidth() - d * 0.5f, yFor (thr) });
 }
 
 void DynTransferGraph::paint (juce::Graphics& g)
@@ -272,7 +347,8 @@ void DynTransferGraph::paint (juce::Graphics& g)
 
     // The levels down the left, plain ticks at the right (not a meter).
     // The column fits "-60" (small windows shrink the labels rather than cut them).
-    const float labelW = plot.getX() - bounds.getX() - 4.0f;
+    // (WING 3.1: right-aligned 8 px left of the plot.)
+    const float labelW = plot.getX() - bounds.getX() - 3.0f - bounds.getWidth() * 8.0f / 552.0f;
     g.setFont (fontFittingWidth (wingFontPx (juce::jlimit (6.0f, 11.0f, pxPerDb * 1.6f)), "-60", labelW - 3.0f, 1.0f));
     const float tickX = plot.getRight() + bounds.getWidth() * 0.03f;
     const float tickW = juce::jmax (4.0f, bounds.getWidth() * 0.018f);
@@ -307,7 +383,9 @@ void DynTransferGraph::paint (juce::Graphics& g)
     const auto handle = handleArea();
     g.setColour (slot.on.load() ? thresholdLineOn : thresholdLine);
     const float lineW = juce::jmax (2.0f, pxPerDb * 0.55f); // 3 px on the console
-    g.fillRect (juce::Rectangle<float> (plot.getX(), yFor (thr) - lineW * 0.5f, handle.getX() - plot.getX(), lineW));
+    // (From 2 px right of the meter, 15 px into the plot, as on the console.)
+    const float lineX = plot.getX() + bounds.getWidth() * 15.0f / 552.0f;
+    g.fillRect (juce::Rectangle<float> (lineX, yFor (thr) - lineW * 0.5f, handle.getX() - lineX, lineW));
 
     if (! curve.empty())
     {
@@ -440,7 +518,7 @@ void DynEnvelopeGraph::timerCallback()
 juce::Rectangle<float> DynEnvelopeGraph::graphArea() const
 {
     auto r = getLocalBounds().toFloat();
-    r.removeFromTop (r.getHeight() * 0.2f + 6.0f);
+    r.removeFromTop (r.getHeight() * 0.2f + wingPx (8.0f)); // the WING's 8 px gap under the title
     return r;
 }
 
@@ -459,17 +537,20 @@ namespace
         const float w = area.getWidth() * kSegment;
         const float minW = juce::jmax (1.0f, area.getWidth() * 0.006f);
         const float wa = juce::jmax (minW, juce::jmax (0.0f, a) * w), wh = juce::jmax (0.0f, h) * w, wr = juce::jmax (minW, juce::jmax (0.0f, r) * w);
-        const float x0 = area.getCentreX() - (wa + wh + wr) * 0.5f;
-        return { x0, x0 + wa, x0 + wa + wh, x0 + wa + wh + wr, area.getY() + area.getHeight() * 0.2f, area.getBottom() };
+        // The hold's middle sits at the graph's middle (WING 3.1: the gate's
+        // and the compressor's holds both centre on x 972 of 672-1272).
+        const float x1 = area.getCentreX() - wh * 0.5f;
+        return { x1 - wa, x1, x1 + wh, x1 + wh + wr, area.getY() + area.getHeight() * 0.2f, area.getBottom() };
     }
 } // namespace
 
-void DynEnvelopeGraph::paintShape (juce::Graphics& g, juce::Rectangle<float> area, float attack, float hold, float release, bool on, bool handles)
+void DynEnvelopeGraph::paintShape (juce::Graphics& g, juce::Rectangle<float> area, float attack, float hold, float release, bool on, bool handles, bool thumb)
 {
-    g.setColour (plotBg);
+    g.setColour (thumb ? juce::Colours::black : plotBg);
     g.fillRect (area);
-    paintDots (g, area.reduced (area.getWidth() * 0.02f, area.getHeight() * 0.05f), area.getWidth() / 24.0f, area.getHeight() / 8.0f,
-               juce::jmax (1.0f, area.getHeight() * (handles ? 0.004f : 0.006f)), handles ? screenDot : gridDot);
+    const juce::Colour dot = thumb ? juce::Colour (0xff303030) : (handles ? screenDot : gridDot);
+    paintDots (g, area.reduced (area.getWidth() * 0.02f, area.getHeight() * 0.05f), area.getWidth() / (thumb ? 8.0f : 24.0f), area.getHeight() / (thumb ? 4.0f : 8.0f),
+               juce::jmax (1.0f, area.getHeight() * (handles && ! thumb ? 0.004f : 0.006f)), dot);
     const auto s = shapeIn (area, attack, hold, release);
     juce::Path p;
     p.startNewSubPath (s.x0, s.bottom);
@@ -481,7 +562,7 @@ void DynEnvelopeGraph::paintShape (juce::Graphics& g, juce::Rectangle<float> are
     g.setColour (on ? envFillOn : envFillOff);
     g.fillPath (fill);
     // The guides at the ends of the hold, dimmed where they cross the fill.
-    const float guideW = juce::jmax (1.5f, area.getHeight() * 0.012f);
+    const float guideW = thumb ? 1.0f : juce::jmax (1.5f, area.getHeight() * 0.012f);
     g.setColour (envGuide.withAlpha (0.6f));
     g.fillRect (s.x1 - guideW * 0.5f, area.getY(), guideW, area.getHeight());
     g.fillRect (s.x2 - guideW * 0.5f, area.getY(), guideW, area.getHeight());
@@ -489,10 +570,10 @@ void DynEnvelopeGraph::paintShape (juce::Graphics& g, juce::Rectangle<float> are
     g.fillRect (s.x1 - guideW * 0.5f, area.getY(), guideW, s.top - area.getY());
     g.fillRect (s.x2 - guideW * 0.5f, area.getY(), guideW, s.top - area.getY());
     g.setColour (on ? envLineOn : envLineOff);
-    g.strokePath (p, juce::PathStrokeType (juce::jmax (1.2f, area.getHeight() * 0.012f)));
+    g.strokePath (p, juce::PathStrokeType (thumb ? juce::jmax (1.0f, area.getHeight() * 0.025f) : juce::jmax (1.2f, area.getHeight() * 0.012f)));
     if (! handles)
         return;
-    const float d = juce::jlimit (10.0f, 30.0f, area.getHeight() * 0.11f);
+    const float d = thumb ? juce::jmax (3.0f, area.getHeight() * 0.13f) : juce::jlimit (10.0f, 30.0f, area.getHeight() * 0.11f);
     const float low = s.bottom - area.getHeight() * 0.2f;
     for (auto pt : { juce::Point<float> (s.x0, low), juce::Point<float> (s.x2, s.top), juce::Point<float> (s.x3, low) })
     {
@@ -502,7 +583,7 @@ void DynEnvelopeGraph::paintShape (juce::Graphics& g, juce::Rectangle<float> are
         g.setColour (plotBg);
         g.fillEllipse (juce::Rectangle<float> (d, d).withCentre (pt));
         g.setColour (juce::Colours::white);
-        g.drawEllipse (juce::Rectangle<float> (d, d).withCentre (pt), juce::jmax (1.5f, d * 0.12f));
+        g.drawEllipse (juce::Rectangle<float> (d, d).withCentre (pt), thumb ? juce::jmax (1.0f, d * 0.14f) : juce::jmax (1.5f, d * 0.12f));
     }
 }
 
@@ -555,8 +636,10 @@ void DynEnvelopeGraph::mouseDrag (const juce::MouseEvent& e)
     const int idx = paramIndex (dragHandle);
     const auto& spec = models::model (models::Dynamics, slot.model.load());
     const float w = juce::jmax (1.0f, graphArea().getWidth() * kSegment);
-    // The attack handle sits at the left end: dragging it left lengthens the attack.
-    const float sign = dragHandle == 0 ? -1.0f : 1.0f;
+    // The attack handle sits at the left end: dragging it left lengthens the
+    // attack. The hold grows both ways from the middle, so its handle (the
+    // hold's right end) moves half as far as the hold grows.
+    const float sign = dragHandle == 0 ? -1.0f : (dragHandle == 1 ? 2.0f : 1.0f);
     const float pos = juce::jlimit (0.0f, 1.0f, dragStart + sign * (float) e.getDistanceFromDragStartX() / w);
     const auto& param = spec.params[(size_t) idx];
     slot.values[idx] = param.fromNormalised (pos);

@@ -31,15 +31,18 @@ juce::String consoleText (const models::Param& p, float v)
     // The TILT EQ reads to a hundredth of a dB ("0.00 dB", 3.1).
     if (p.table == models::FilterTools && p.id == "tilt")
         return juce::String (v, 2) + " dB";
-    // A RATIO picked from a list reads "2.0:1" (an expander's "1:2.0"), a tenth
-    // at least, as on the console; the list's special entries (B560's negative
-    // ratios and INF) keep their own text.
+    // A RATIO picked from a list reads "3:1" (an expander's "1:3"), "2.5:1" or
+    // "1.43:1": the list's value without trailing zeros, as the console's
+    // parameter bar shows the WING COMPRESSOR's 3.0 and the WING GATE's 1:3
+    // (3.1 screenshots); the list's special entries (B560's negative ratios
+    // and INF) keep their own text.
     if (p.kind == models::ParamKind::Values && p.id.endsWith ("ratio"))
         if (const auto shown = p.display (v); shown.containsOnly ("0123456789.") && shown.getFloatValue() > 0.0f)
         {
             const float r = shown.getFloatValue();
             const bool hundredths = std::abs (r * 10.0f - std::round (r * 10.0f)) > 1.0e-3f;
-            const auto text = juce::String (r, hundredths ? 2 : 1);
+            const bool tenths = std::abs (r - std::round (r)) > 1.0e-3f;
+            const auto text = juce::String (r, hundredths ? 2 : (tenths ? 1 : 0));
             return tokenOf (p) == "EXP" ? "1:" + text : text + ":1";
         }
     if (! dyn && ! eq)

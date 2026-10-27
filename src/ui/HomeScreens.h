@@ -84,7 +84,7 @@ protected:
 
     /** The LEVEL panel that stays at the right on OVERVIEW, ICON/COLOR, NAME
         and TAGS: add it in the constructor, lay it out first in resized()
-        (it takes 22 % of the width; the rest is returned). */
+        (where the overview has it; the rest of `area` is returned). */
     home::LevelPanel& addLevelPanel();
     juce::Rectangle<int> layoutLevelPanel (juce::Rectangle<int> area);
     home::LevelPanel* levelPanel = nullptr;

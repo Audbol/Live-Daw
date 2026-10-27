@@ -52,7 +52,7 @@ namespace
             const int left = strip.params.inputLeft.load();
             const bool st = strip.params.stereo.load();
             const int right = strip.params.inputRight.load() >= 0 ? strip.params.inputRight.load() : left + 1;
-            paintInputSourceTile (g, r.reduced (juce::jmax (1.5f, wingPx (3.0f))), ctx.engine, left, right, st, hasSignal());
+            paintInputSourceTile (g, r.reduced (juce::jmax (1.5f, wingPx (4.0f))), ctx.engine, left, right, st, hasSignal());
         }
 
         void mouseUp (const juce::MouseEvent& e) override
@@ -700,7 +700,7 @@ private:
 void paintLinkFootnote (juce::Graphics& g, juce::Rectangle<int> area, const juce::String& what)
 {
     g.setColour (colours::dim);
-    g.setFont (wingFontFit (12.0f / 800.0f, (float) area.getHeight() * 0.9f));
+    g.setFont (wingFontFit (10.0f / 800.0f, (float) area.getHeight() * 0.9f)); // 10 px capitals [3.1]
     g.drawFittedText ("* CUSTOMIZATION LINK IS ENABLED, " + what + " ASSIGNED TO THE SELECTED SOURCE", area, juce::Justification::centredLeft, 1, 0.6f);
 }
 
@@ -1321,7 +1321,7 @@ public:
         // the key's pointer at 116-124, keys 124-192, then the black gap up to
         // the content at 284 (the tag chips and, in wrench mode, the TAP flag).
         // The slot screens show only the thumbnails.
-        const int unitW = keys ? 268 : 96;
+        const int unitW = keys ? 268 : 101; // the slot screens: 96 + the tap line's 5
         const float kx = (float) b.getWidth() / (float) unitW;
         const int thumbW = juce::roundToInt (96.0f * kx);
         const int keyW = keys ? juce::roundToInt (68.0f * kx) : 0;
@@ -1476,7 +1476,7 @@ public:
             if (editing && ! gapArea.isEmpty())
                 paintTapFlag (g, dotX, ty);
             g.setColour (colours::tap);
-            g.fillEllipse (dotX - d * 0.5f, ty - d * 0.5f, d, d);
+            g.fillRoundedRectangle (dotX - d * 0.5f, ty - d * 0.5f, d, d, d * 0.3f); // a rounded square on the console
         }
 
         if (! wrench.isEmpty())
@@ -1726,73 +1726,10 @@ private:
         paintBlockIcon (g, icon, inner, on ? juce::Colours::black : kIconInk);
     }
 
-    /** The block keys' icons as the 3.1 console draws them, in WING pixels
-        of the 44 px key: GATE a line rising to a knee, EQ two bells, COMP a
-        slanted F, INS a bar over ^ v, the wrench in outline. */
     static void paintBlockIcon (juce::Graphics& g, Icon icon, juce::Rectangle<float> key, juce::Colour ink)
     {
-        const float u = key.getWidth() / 44.0f;
-        auto pt = [&key, u] (float x, float y) { return juce::Point<float> (key.getX() + x * u, key.getY() + y * u); };
-        const juce::PathStrokeType stroke (2.2f * u, juce::PathStrokeType::curved, juce::PathStrokeType::rounded);
-        juce::Path p;
-        auto line = [&p, &pt] (std::initializer_list<juce::Point<float>> points)
-        {
-            bool first = true;
-            for (auto q : points)
-            {
-                const auto at = pt (q.x, q.y);
-                if (first)
-                    p.startNewSubPath (at);
-                else
-                    p.lineTo (at);
-                first = false;
-            }
-        };
-        if (icon == Icon::Gate)
-            line ({ { 16.5f, 34.5f }, { 16.5f, 20.0f }, { 29.0f, 9.5f } });
-        else if (icon == Icon::Compressor)
-        {
-            line ({ { 13.0f, 34.5f }, { 17.5f, 20.0f }, { 31.0f, 9.5f } });
-            line ({ { 15.0f, 28.0f }, { 31.0f, 17.0f } });
-        }
-        else if (icon == Icon::Eq)
-        {
-            p.startNewSubPath (pt (6.0f, 29.0f));
-            for (float x0 : { 6.0f, 21.5f })
-            {
-                p.cubicTo (pt (x0 + 5.0f, 29.0f), pt (x0 + 4.0f, 15.0f), pt (x0 + 8.0f, 15.0f));
-                p.cubicTo (pt (x0 + 12.0f, 15.0f), pt (x0 + 11.0f, 29.0f), pt (x0 + 15.5f, 29.0f));
-            }
-        }
-        else if (icon == Icon::Insert)
-        {
-            line ({ { 9.0f, 15.0f }, { 35.5f, 15.0f } });
-            line ({ { 8.5f, 29.5f }, { 13.8f, 22.0f }, { 19.0f, 29.5f } });
-            line ({ { 24.5f, 22.0f }, { 30.0f, 29.5f }, { 35.5f, 22.0f } });
-        }
-        else if (icon == Icon::Wrench)
-        {
-            // A spanner from bottom left to top right, its jaw open to the right.
-            p.startNewSubPath (pt (6.5f, 32.0f));
-            p.lineTo (pt (18.5f, 20.0f));
-            p.cubicTo (pt (16.0f, 14.0f), pt (20.0f, 7.0f), pt (27.5f, 6.5f));
-            p.lineTo (pt (29.0f, 8.0f));
-            p.lineTo (pt (25.5f, 12.5f));
-            p.lineTo (pt (28.5f, 16.0f));
-            p.lineTo (pt (33.5f, 12.0f));
-            p.lineTo (pt (35.5f, 13.5f));
-            p.cubicTo (pt (35.5f, 21.0f), pt (29.0f, 26.5f), pt (23.5f, 24.5f));
-            p.lineTo (pt (11.5f, 36.5f));
-            p.cubicTo (pt (10.0f, 38.0f), pt (5.0f, 34.0f), pt (6.5f, 32.0f));
-            p.closeSubPath();
-        }
-        else
-        {
+        if (! paintHomeBlockIcon (g, icon, key, ink))
             drawIcon (g, icon, key.reduced (key.getHeight() * 0.2f), ink);
-            return;
-        }
-        g.setColour (ink);
-        g.strokePath (p, stroke);
     }
 
     static inline const juce::Colour kIconInk { 0xff707070 };
@@ -2498,7 +2435,9 @@ void HomePage::resized()
         const int x0 = juce::roundToInt (x * kx), y0 = juce::roundToInt (y * ky);
         return juce::Rectangle<int> (x0, y0, juce::roundToInt ((x + w) * kx) - x0, juce::roundToInt ((y + h) * ky) - y0);
     };
-    column->setBounds (wr (8.0f, 0.0f, overviewGroup ? 268.0f : 96.0f, 672.0f));
+    // On the slot screens the column reaches 108 + 1, so the insert tap's
+    // grey line (3 px right of the thumbnails) shows, as on the console.
+    column->setBounds (wr (8.0f, 0.0f, overviewGroup ? 268.0f : 101.0f, 672.0f));
 
     if (overviewGroup)
     {
