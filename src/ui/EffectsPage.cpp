@@ -3,6 +3,7 @@
 #include "engine/PluginHost.h"
 #include "ui/Faceplate.h"
 #include "ui/FaceplateDesign.h"
+#include "ui/MeterBallistics.h"
 #include "ui/HomeWidgets.h"
 #include "ui/ModelParams.h"
 #include "ui/Pages.h"
@@ -438,12 +439,16 @@ public:
             addAndMakeVisible (comp);
         for (juce::Component* comp : { (juce::Component*) &sourceKeys, (juce::Component*) &trimBox, (juce::Component*) &latencyBox })
             addChildComponent (comp);
-        startTimerHz (6);
+        // The EXTERNAL EFFECT's meters at the meters' rate; the rest of the page at a sixth of it.
+        startTimerHz (kMeterHz);
     }
 
     void setSlot (int s)
     {
         slot = juce::jlimit (0, kNumFx - 1, s);
+        for (auto& m : outboardMeters)
+            m.reset();
+        meterPolledAt = 0;
         mix.setBinding (bindLinear ("FX MIX", ctx.engine.getFx().params (slot).mix, 0.0f, 100.0f, " %", 0, 100.0f));
         auto& v = ctx.engine.getFx().params (slot).values;
         trimBox.setBinding (bindLinear ("TRIM", v[ld::ext::kTrim], -18.0f, 18.0f, " dB", 1, 0.0f));
@@ -609,7 +614,8 @@ private:
         if (device)
             face.bind (
                 models::Fx, shownModel, fx.params (slot).values, [this] { return ctx.engine.getFx().getMeter (slot); },
-                [this] (int band) { return ctx.engine.getFx().getBandGain (slot, band); });
+                [this] (int band) { return ctx.engine.getFx().getBandGain (slot, band); },
+                [this] (float* out, int n) { return ctx.engine.getFx().getReadouts (slot, out, n); });
         else
             face.unbind();
         shownOutboard = fx.isOutboard (slot);
@@ -629,12 +635,59 @@ private:
     void timerCallback() override
     {
         auto& fx = ctx.engine.getFx();
+        if (shownOutboard)
+            pollOutboardMeters();
+        if (++ticks % (kMeterHz / 6) != 0)
+            return;
         if (fx.getModel (slot) != shownModel || fx.isOutboard (slot) != shownOutboard)
             rebind();
         openKey.setEnabled (fx.hasPlugin (slot));
         repaint (header);
         if (shownOutboard)
-            repaint (body); // the SEND and RETURN meters, the patch
+            repaint (body); // the patch, the RETURN, the round trip
+    }
+
+    //==============================================================================
+    // The SEND and RETURN meters (Fig. 169): the FX SEND after TRIM and the RETURN,
+    // with the app's meter ballistics; only they repaint at the meters' rate.
+
+    static constexpr int kMeterHz = 30;
+    static constexpr float kMeterX[2] = { 100.0f, 1020.0f }; // SEND, RETURN columns (frame)
+
+    juce::Rectangle<int> outboardMeterArea (int side) const { return onFrame (kMeterX[side] - 2.0f, 190.0f, 36.0f, 176.0f).expanded (2); }
+
+    void pollOutboardMeters()
+    {
+        float levels[ld::kFxLevels] {};
+        const int n = ctx.engine.getFx().getReadouts (slot, levels, ld::kFxLevels);
+        const auto now = juce::Time::getMillisecondCounter();
+        const float dt = meterPolledAt == 0 ? 0.0f : (float) (now - meterPolledAt) * 0.001f;
+        meterPolledAt = now;
+        for (int i = 0; i < ld::kFxLevels; ++i)
+        {
+            outboardMeters[(size_t) i].advance (i < n ? levels[i] : 0.0f, dt);
+            const float db = outboardMeters[(size_t) i].levelDb;
+            if (std::abs (db - shownMeterDb[(size_t) i]) > 0.25f && juce::jmax (db, shownMeterDb[(size_t) i]) > -70.0f)
+            {
+                shownMeterDb[(size_t) i] = db;
+                repaint (outboardMeterArea (i / 2)); // 0/1 SEND, 2/3 RETURN
+            }
+        }
+    }
+
+    /** One column of segments: lit up to `db` on the screens' meter scale (CLIP at the top). */
+    void paintMeterColumn (juce::Graphics& g, float x, float db) const
+    {
+        constexpr float top = 199.0f, bottom = 361.0f; // where the scale prints CLIP and -60
+        const float pos = meters::scalePos (db);
+        for (int seg = 0; seg < 24; ++seg)
+        {
+            const float y = 194.0f + 7.0f * (float) seg;
+            const float at = 1.0f - (y + 2.5f - top) / (bottom - top); // the scale position of the segment
+            const bool lit = db > meters::kFloorDb && pos >= juce::jmin (1.0f, at) - 0.004f;
+            g.setColour (! lit ? juce::Colour (0xff3a3a3a) : (seg == 0 ? juce::Colour (0xffe02020) : juce::Colour (0xff38c838)));
+            g.fillRect (onFrame (x, y, 12, 5));
+        }
     }
 
     //==============================================================================
@@ -716,12 +769,10 @@ private:
                 g.setColour (Colours::textDim);
                 g.drawText (marks[i], onFrame (x - 46, 192.0f + 27.0f * (float) i, 40, 14), juce::Justification::centredRight, false);
             }
+            // SEND (input) or RETURN (output) left and right.
+            const int first = x < 500.0f ? 0 : 2;
             for (int col = 0; col < 2; ++col)
-                for (int seg = 0; seg < 24; ++seg)
-                {
-                    g.setColour (juce::Colour (0xff3a3a3a));
-                    g.fillRect (onFrame (x + 18.0f * (float) col, 194.0f + 7.0f * (float) seg, 12, 5));
-                }
+                paintMeterColumn (g, x + 18.0f * (float) col, outboardMeters[(size_t) (first + col)].levelDb);
         }
 
         // SEND: the two outputs the FX SEND is patched to (tap: ROUTING > OUTPUTS).
@@ -841,7 +892,10 @@ private:
 
     UiContext& ctx;
     EffectsPage& page;
-    int slot = 0, shownModel = -1, page6 = 0;
+    int slot = 0, shownModel = -1, page6 = 0, ticks = 0;
+    std::array<meters::Ballistics, ld::kFxLevels> outboardMeters {};
+    std::array<float, ld::kFxLevels> shownMeterDb { meters::kFloorDb, meters::kFloorDb, meters::kFloorDb, meters::kFloorDb };
+    juce::uint32 meterPolledAt = 0;
     bool shownOutboard = false;
     juce::Rectangle<int> sendArea, returnArea, modeArea;
     /** SOURCE: a plugin in the slot, or the console's outboard insert. */

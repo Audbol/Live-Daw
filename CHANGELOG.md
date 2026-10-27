@@ -7,6 +7,22 @@ All notable changes to Sidecar are listed here. Versions follow
 
 ### Added
 
+- **Live meters on the FX pages** (dynamics, EQ and utility devices, channel strips,
+  EXTERNAL): C5-COMBINATOR's band screen shows each band at its gain as it is now
+  (n-GAIN plus its live gain reduction and SBC makeup) over the input's third-octave
+  spectrum; 2-BAND DEESSER's band LEDs light while their band de-esses; ULTRA ENHANCER's
+  STEREO and MONO VUs, PSYCHO BASS's low-band and harmonics meters, TAPE MACHINE's
+  record-level VU, SUB MONSTER's band meters, VELVET IMAGER's input / output / mid-side
+  LED meters, correlation bar and LF vector scope, SPEAKER MANAGER's live DYN EQ curve
+  (as set in blue, as it is now in orange) and the EXTERNAL EFFECT's SEND and RETURN
+  meters all follow the signal. Each channel-strip section's meter shows its own
+  block (the gate, the compressor, the 1176, the leveler...), the mastering strip's
+  tape VU, enhancer VUs and limiter LEDs their units'. Levels move with the app's
+  meter ballistics (full peak at once, 60 dB/s down); gain reduction meters follow the
+  processor. The pages poll ~30 times a second and repaint only the meters that move.
+- C ABI 23: `ld_fx_readouts` (an FX slot's input/output levels and its device's
+  readouts); `ld_fx_latency` includes a built-in device's own latency.
+
 - Multitrack editor: **FILE > Import: COPY TO PROJECT / KEEP IN PLACE / ASK EACH
   TIME** (kept in the app settings). KEEP IN PLACE plays imported WAV, AIFF and FLAC
   files where they are (another drive, a sample library) instead of copying them to
@@ -486,6 +502,15 @@ All notable changes to Sidecar are listed here. Versions follow
   channel).
 ### Fixed
 
+- PRECISION LIMITER: its 1 ms look-ahead is now reported as the slot's latency (delay
+  compensation) and FX MIX delays the dry signal by it; below 100 % MIX the dry and
+  limited signals combed. The mastering strip keeps the look-ahead when its limiter is
+  switched off, so its latency never changes.
+- EXCITER: TIMBRE toward positive (even harmonics) generated odd harmonics like the
+  negative side, so it hardly changed the sound; it now adds even harmonics.
+- SUB MONSTER's readouts under the faders show each band's frequency (from TUNE), as on
+  the plug-in, instead of the fader levels.
+- TAPE MACHINE's VU scale reached past the end of its arc (+1 to +3 off the meter).
 - WING REMOTE (Native, TCP 2222): a client that was reading and sending normally
   (WING Edit) could be disconnected at random on Windows. The server read and wrote
   each connection with socket timeouts (100 ms reads, 10 s writes), and on Windows a

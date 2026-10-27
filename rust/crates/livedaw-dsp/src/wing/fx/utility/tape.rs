@@ -19,10 +19,15 @@
 //! enables the playback high shelf that restores the highs the slower speeds
 //! lose (+4 dB at 7.5 ips, +2.5 dB at 15 ips, +1 dB at 30 ips). OUT GAIN is
 //! the output level.
+//!
+//! Readout 0 (the VU meter): the record level, the signal onto the tape
+//! after DRIVE as a VU level, 0 VU at -14 dBFS RMS (where the tape starts to
+//! saturate audibly; the red zone past it is compression).
 
 use super::{sub_blocks, Cascade, Design, Glide};
 use crate::wing::fx::blocks::{db_to_gain, fast_tanh, Biquad, BiquadCoeffs, Smoothed};
-use crate::wing::fx::FxAlgo;
+use crate::wing::fx::meters::VuMeter;
+use crate::wing::fx::{FxAlgo, FX_READOUTS};
 use crate::wing::Params;
 
 const EMPHASIS_DB: f64 = 6.0;
@@ -43,6 +48,8 @@ pub(crate) struct Tape {
     dir: [f32; 2],
     drive: Smoothed,
     out: Smoothed,
+    /// The record level's VU meter.
+    vu: VuMeter,
     primed: bool,
 }
 
@@ -58,6 +65,7 @@ impl Tape {
             dir: [0.0; 2],
             drive: Smoothed::new(1.0, 30.0, sr),
             out: Smoothed::new(1.0, 30.0, sr),
+            vu: VuMeter::new(sr, -14.0),
             primed: false,
         };
         t.glide.tgt = [15f32.ln(), 1.0, 1.0];
@@ -115,6 +123,7 @@ impl FxAlgo for Tape {
             self.pre.process(r, 1);
             for (x, y) in l.iter_mut().zip(r.iter_mut()) {
                 let g = self.drive.tick();
+                self.vu.tick(g * std::f32::consts::FRAC_1_SQRT_2 * (*x * *x + *y * *y).sqrt());
                 for (c, v) in [x, y].into_iter().enumerate() {
                     let u = *v * g;
                     // Direction of travel and how far into saturation.
@@ -143,10 +152,15 @@ impl FxAlgo for Tape {
         self.playback.reset();
         self.last = [0.0; 2];
         self.dir = [0.0; 2];
+        self.vu.reset();
         self.glide.snap();
         self.redesign();
         self.drive.snap(self.drive.target);
         self.out.snap(self.out.target);
+    }
+
+    fn readouts(&self, out: &mut [f32; FX_READOUTS]) {
+        out[0] = self.vu.level();
     }
 }
 
@@ -174,6 +188,34 @@ mod tests {
             on.set("spd", spd).set("hi", 1.0);
             assert!(on.sine_gain_db(8000.0, 0.01) > off.sine_gain_db(8000.0, 0.01) + 1.5, "{spd} ips");
         }
+    }
+
+    #[test]
+    fn vu_shows_the_record_level_and_out_gain_the_output() {
+        let vu = |drv: f32| {
+            let mut rig = Rig::new("TAPE");
+            rig.set("drv", drv);
+            rig.sine_gain_db(1000.0, 0.1);
+            let mut r = [0.0; crate::wing::fx::FX_READOUTS];
+            rig.dev.readouts(&mut r);
+            20.0 * r[0].log10()
+        };
+        // 0.1 peak = -23 dBFS RMS: -9 VU at 0 dB drive, +1 VU at +10 dB.
+        assert!((vu(0.0) + 9.0).abs() < 0.5, "{}", vu(0.0));
+        assert!((vu(10.0) - vu(0.0) - 10.0).abs() < 0.3);
+        let mut rig = Rig::new("TAPE");
+        rig.set("out", -6.0);
+        assert!((rig.sine_gain_db(1000.0, 0.01) + 6.0).abs() < 1.0);
+    }
+
+    #[test]
+    fn low_bump_lifts_the_head_bump() {
+        let mut off = Rig::new("TAPE");
+        off.set("low", 0.0);
+        let mut on = Rig::new("TAPE");
+        on.set("low", 1.0);
+        // 15 ips: the bump round 48 Hz.
+        assert!(on.sine_gain_db(48.0, 0.01) > off.sine_gain_db(48.0, 0.01) + 1.5);
     }
 
     #[test]

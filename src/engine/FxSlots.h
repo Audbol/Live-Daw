@@ -117,6 +117,11 @@ public:
     float getMeter (int slot) const noexcept { return ld::ld_fx_meter (engine, slot); }
     /** Live gain of a dynamic band of the slot's device (dB, signed). */
     float getBandGain (int slot, int band) const noexcept { return ld::ld_fx_band_gain (engine, slot, band); }
+    /** The slot's live meters into `out` (up to `n`; returns how many): ld::kFxLevels levels
+        (input L/R, output L/R before FX MIX, or the outboard insert's FX SEND and RETURN;
+        linear, falling at 60 dB/s), then ld::kFxReadouts readouts of its device (laid out
+        per device, FxAlgo::readouts; 0 = idle). Any thread. */
+    int getReadouts (int slot, float* out, int n) const noexcept { return ld::ld_fx_readouts (engine, slot, out, n); }
     bool isFaulted (int slot) const noexcept { return ld::ld_fx_state (engine, slot, 1); }
     bool isDoubleAssigned (int slot) const noexcept { return ld::ld_fx_state (engine, slot, 2); }
     /** Clears the slot's fault and double assignment, and its chain's faulted plugins. */
@@ -125,7 +130,8 @@ public:
     float getLoad (int slot) const noexcept { return ld::ld_fx_load (engine, slot); }
     /** Number of strip inserts using the slot. */
     int getNumUsers (int slot) const noexcept { return ld::ld_fx_num_users (engine, slot); }
-    /** The slot's latency in samples: its plugin's, or its outboard insert's (0 otherwise). */
+    /** The slot's latency in samples: its plugin's, its outboard insert's, or its built-in
+        device's (the PRECISION LIMITER's look-ahead; 0 otherwise). */
     int getLatency (int slot) const noexcept { return ld::ld_fx_latency (engine, slot); }
 
     /** Message thread: passes every plugin's current latency to the engine (a

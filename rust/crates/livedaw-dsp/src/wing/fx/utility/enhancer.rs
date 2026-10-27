@@ -13,6 +13,8 @@
 //! ST PAN and MONO PAN pan them, and LMF SPRD sets the stereo width of the
 //! low-mid content (150 Hz .. 1.5 kHz: -100 % = mono, +100 % = double side).
 //! GAIN is the overall output level; SOLO outputs only the added enhancement.
+//! Readouts (its two VU meters): 0 the STEREO (side) and 1 the MONO (mid)
+//! output level, VU levels with 0 VU at -18 dBFS RMS.
 //!
 //! Exciter, after the mid-1970s aural exciter that added harmonics while
 //! keeping the output level: a side chain low-cut at TUNE (PEAK is its
@@ -27,7 +29,8 @@
 
 use super::{dial50, rail, sub_blocks, Glide};
 use crate::wing::fx::blocks::{coef, db_to_gain, fast_tanh, Biquad, BiquadCoeffs, Smoothed};
-use crate::wing::fx::FxAlgo;
+use crate::wing::fx::meters::VuMeter;
+use crate::wing::fx::{FxAlgo, FX_READOUTS};
 use crate::wing::Params;
 
 /// Distortion residual of a soft clipper at drive `d`: about `d^2 y^3 / 3` for small
@@ -89,8 +92,13 @@ pub(crate) struct Enhancer {
     spread: Smoothed,
     gain: Smoothed,
     solo: Smoothed,
+    /// The STEREO and MONO VU meters.
+    vu: [VuMeter; 2],
     primed: bool,
 }
+
+/// The RMS level that reads 0 VU on the enhancer's meters.
+const VU_ZERO_DBFS: f32 = -18.0;
 
 impl Enhancer {
     pub(crate) fn new(sr: f32) -> Self {
@@ -119,6 +127,7 @@ impl Enhancer {
             spread: sm(0.0),
             gain: sm(1.0),
             solo: sm(0.0),
+            vu: [VuMeter::new(sr, VU_ZERO_DBFS); 2],
             primed: false,
         };
         s.glide.tgt = [100f32.ln(), 1.5f32.ln(), 3000f32.ln()];
@@ -214,6 +223,8 @@ impl FxAlgo for Enhancer {
                 let side = side * self.st_lvl.tick();
                 let (pm, ps) = (self.mono_pan.tick(), self.st_pan.tick());
                 let g = self.gain.tick();
+                self.vu[0].tick(side * g);
+                self.vu[1].tick(mid * g);
                 *l = rail((mid * (1.0 - pm).min(1.0) + side * (1.0 - ps).min(1.0)) * g);
                 *r = rail((mid * (1.0 + pm).min(1.0) - side * (1.0 + ps).min(1.0)) * g);
             }
@@ -228,11 +239,17 @@ impl FxAlgo for Enhancer {
         self.high_phase.reset();
         self.low_mid.reset();
         self.env = [[0.0; 2]; 3];
+        self.vu.iter_mut().for_each(VuMeter::reset);
         for s in self.smoothers() {
             s.snap(s.target);
         }
         self.glide.snap();
         self.redesign();
+    }
+
+    fn readouts(&self, out: &mut [f32; FX_READOUTS]) {
+        out[0] = self.vu[0].level();
+        out[1] = self.vu[1].level();
     }
 }
 
@@ -327,7 +344,8 @@ impl FxAlgo for Exciter {
                     let s = s2 + zf * (s1 - s2);
                     let u = d * s;
                     let odd = fast_tanh(u) / d;
-                    let even = fast_tanh(u * u.abs()) / d;
+                    // An even function (u * |u| would be odd: odd harmonics again); its DC goes in `post`.
+                    let even = fast_tanh(u * u) / d;
                     let gen = 0.5 * (1.0 - t) * odd + 0.5 * (1.0 + t) * even;
                     let side = self.post.tick((1.0 - h) * s + h * 2.0 * gen, c);
                     *x = *x * dry + mix * side;
@@ -362,6 +380,93 @@ mod tests {
         rig.set("high", 100.0).set("bass", 0.0).set("mid", 0.0).set("solo", 1.0);
         let low = rig.sine_gain_db(60.0, 0.05);
         assert!(low < -30.0, "{low}");
+    }
+
+    use std::f32::consts::TAU;
+
+    /// Level (dB re full scale) of the `freq` component of `v`'s second half.
+    fn bin_db(v: &[f32], freq: f32) -> f32 {
+        let n = v.len();
+        let (mut re, mut im) = (0.0f64, 0.0f64);
+        for (i, s) in v.iter().enumerate().skip(n / 2) {
+            let ph = std::f64::consts::TAU * freq as f64 * i as f64 / 48_000.0;
+            re += *s as f64 * ph.cos();
+            im += *s as f64 * ph.sin();
+        }
+        (20.0 * ((re * re + im * im).sqrt() * 4.0 / n as f64).max(1e-12).log10()) as f32
+    }
+
+    /// A stereo pair through `token` with `set`: (l, r) out.
+    fn through(token: &str, set: &[(&str, f32)], l: Vec<f32>, r: Vec<f32>) -> (Vec<f32>, Vec<f32>, Rig) {
+        let mut rig = Rig::new(token);
+        for (id, v) in set {
+            rig.set(id, *v);
+        }
+        let (mut l, mut r) = (l, r);
+        rig.run(&mut l, &mut r);
+        (l, r, rig)
+    }
+
+    fn sine(freq: f32, amp: f32) -> Vec<f32> {
+        (0..48_000).map(|i| (TAU * freq * i as f32 / 48_000.0).sin() * amp).collect()
+    }
+
+    #[test]
+    fn enhancer_bands_and_mono_stereo_sections() {
+        let flat = [("bass", 0.0), ("mid", 0.0), ("high", 0.0)];
+        // BASS and MID GAIN lift their own ranges.
+        for (id, freq, other) in [("bass", 60.0f32, 5000.0f32), ("mid", 1200.0, 60.0)] {
+            let mut set = flat.to_vec();
+            set.retain(|(i, _)| *i != id);
+            set.push((id, 100.0));
+            let (l, _, _) = through("ENHANCE", &set, sine(freq, 0.05), sine(freq, 0.05));
+            let (lo, _, _) = through("ENHANCE", &set, sine(other, 0.05), sine(other, 0.05));
+            let lift = bin_db(&l, freq) - bin_db(&sine(freq, 0.05), freq);
+            let elsewhere = bin_db(&lo, other) - bin_db(&sine(other, 0.05), other);
+            assert!(lift > 1.0 && elsewhere.abs() < lift - 0.5, "{id}: {lift} dB vs {elsewhere} dB");
+        }
+        // MONO LEVEL -100 % removes the mid, ST LEVEL -100 % the side; the VUs show them.
+        let x = sine(500.0, 0.2);
+        let y: Vec<f32> = sine(700.0, 0.2);
+        let (l, r, rig) =
+            through("ENHANCE", &[("bass", 0.0), ("mid", 0.0), ("high", 0.0), ("mlvl", -100.0)], x.clone(), y.clone());
+        assert!(l.iter().zip(&r).skip(24_000).all(|(a, b)| (a + b).abs() < 1e-3), "mid left");
+        let mut ro = [0.0; crate::wing::fx::FX_READOUTS];
+        rig.dev.readouts(&mut ro);
+        assert!(ro[0] > 0.5 && ro[1] < 1e-3, "{:?}", &ro[..2]);
+        let (l, r, rig) = through("ENHANCE", &[("bass", 0.0), ("mid", 0.0), ("high", 0.0), ("stlvl", -100.0)], x.clone(), y);
+        assert!(l.iter().zip(&r).skip(24_000).all(|(a, b)| (a - b).abs() < 1e-3), "side left");
+        rig.dev.readouts(&mut ro);
+        assert!(ro[1] > 0.5 && ro[0] < 1e-3, "{:?}", &ro[..2]);
+        // A mono signal panned hard left with MONO PAN; GAIN sets the level.
+        let (l, r, _) = through("ENHANCE", &[("bass", 0.0), ("mid", 0.0), ("high", 0.0), ("m", -100.0)], x.clone(), x.clone());
+        assert!(bin_db(&r, 500.0) < -60.0 && bin_db(&l, 500.0) > bin_db(&x, 500.0) - 0.5);
+        let (l, _, _) = through("ENHANCE", &[("bass", 0.0), ("mid", 0.0), ("high", 0.0), ("g", 6.0)], x.clone(), x.clone());
+        assert!((bin_db(&l, 500.0) - bin_db(&x, 500.0) - 6.0).abs() < 0.3);
+        // VU calibration: a -18 dBFS RMS mono sine reads 0 VU on MONO.
+        let a = 10f32.powf(-18.0 / 20.0) * std::f32::consts::SQRT_2;
+        let (_, _, rig) = through("ENHANCE", &[("bass", 0.0), ("mid", 0.0), ("high", 0.0)], sine(500.0, a), sine(500.0, a));
+        rig.dev.readouts(&mut ro);
+        assert!((20.0 * ro[1].log10()).abs() < 0.3 && ro[0] < 1e-3, "{:?}", &ro[..2]);
+    }
+
+    #[test]
+    fn exciter_harmonics_timbre_and_dry() {
+        // HARMONICS adds harmonics of a tone above TUNE; TIMBRE + favours the even (2nd), - the odd (3rd).
+        let x = sine(3000.0, 0.3);
+        let h = |set: &[(&str, f32)], k: f32| {
+            let mut s = vec![("tune", 1000.0), ("mix", 100.0)];
+            s.extend_from_slice(set);
+            let (l, _, _) = through("EXCITER", &s, x.clone(), x.clone());
+            bin_db(&l, 3000.0 * k)
+        };
+        assert!(h(&[("hrm", 100.0), ("tmb", 0.0)], 3.0) > h(&[("hrm", 0.0), ("tmb", 0.0)], 3.0) + 10.0);
+        assert!(h(&[("hrm", 100.0), ("tmb", 50.0)], 2.0) > h(&[("hrm", 100.0), ("tmb", -50.0)], 2.0) + 10.0);
+        assert!(h(&[("hrm", 100.0), ("tmb", -50.0)], 3.0) > h(&[("hrm", 100.0), ("tmb", 50.0)], 3.0) + 3.0);
+        // DRY OFF: only the exciter signal, nothing below TUNE.
+        let low = sine(100.0, 0.3);
+        let (l, _, _) = through("EXCITER", &[("tune", 3000.0), ("solo", 1.0), ("mix", 100.0)], low.clone(), low);
+        assert!(bin_db(&l, 100.0) < -40.0, "{}", bin_db(&l, 100.0));
     }
 
     #[test]

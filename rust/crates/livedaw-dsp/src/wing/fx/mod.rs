@@ -16,6 +16,7 @@
 //! characteristic sound; they are not circuit-level emulations.
 
 pub mod blocks;
+pub mod meters;
 
 mod amp;
 mod delay;
@@ -59,10 +60,31 @@ pub trait FxAlgo: Send {
     fn band_gain(&self, _band: usize) -> f32 {
         0.0
     }
+
+    /// The live values the device's screen shows (meters, gain-reduction
+    /// bars, band levels, a scope...): the device writes the ones it has into
+    /// `out` (each device documents its layout; the rest stay 0). Called on
+    /// the audio thread after each block; must not allocate.
+    ///
+    /// Conventions: 0 is every readout's idle value. Levels are linear
+    /// (peaks that rise at once and fall at [`meters::FALL_DB_PER_S`], or VU
+    /// levels relative to 0 VU, see [`meters`]); gain reductions are dB
+    /// (<= 0) following the processor's own envelope.
+    fn readouts(&self, _out: &mut [f32; FX_READOUTS]) {}
+
+    /// The delay the device adds to the signal, in samples (a limiter's
+    /// look-ahead), fixed for the instance's lifetime. The slot delays FX
+    /// MIX's dry signal by it and reports it to the delay compensation.
+    fn latency(&self) -> u32 {
+        0
+    }
 }
 
 /// Bands [`FxAlgo::band_gain`] can report (TRIPLE DEQ has the most).
 pub const FX_BANDS: usize = 3;
+
+/// Readouts [`FxAlgo::readouts`] can report.
+pub const FX_READOUTS: usize = 48;
 
 /// Index of a device in [`FX_MODELS`].
 pub fn model_index(token: &str) -> Option<usize> {
@@ -183,6 +205,16 @@ impl FxDevice {
         self.algo.band_gain(band)
     }
 
+    /// See [`FxAlgo::readouts`].
+    pub fn readouts(&self, out: &mut [f32; FX_READOUTS]) {
+        self.algo.readouts(out);
+    }
+
+    /// See [`FxAlgo::latency`].
+    pub fn latency(&self) -> u32 {
+        self.algo.latency()
+    }
+
     pub fn reset(&mut self) {
         self.algo.reset();
     }
@@ -269,6 +301,14 @@ pub(crate) mod tests {
         assert!(bad.is_none(), "{token}: {what}: non-finite or runaway output");
     }
 
+    /// The screen's readouts are always finite (and the meter's a reduction).
+    fn assert_readouts(token: &str, what: &str, dev: &FxDevice) {
+        let mut r = [0.0; FX_READOUTS];
+        dev.readouts(&mut r);
+        assert!(r.iter().all(|x| x.is_finite() && x.abs() < 1e6), "{token}: {what}: readouts {r:?}");
+        assert!(dev.meter() <= 0.0 && dev.meter().is_finite(), "{token}: {what}: meter {}", dev.meter());
+    }
+
     /// The checks every device must pass (used by each family's tests).
     pub(crate) fn check_device(token: &str) {
         let model = model_index(token).unwrap_or_else(|| panic!("{token}: not in FX_MODELS"));
@@ -307,6 +347,7 @@ pub(crate) mod tests {
                 }
                 let input: Vec<f32> = (0..secs(0.15)).map(|_| rng.sample() * 0.9).collect();
                 assert_sane(token, "random settings", &run(&mut dev, &values, &input, &mut rng));
+                assert_readouts(token, "random settings", &dev);
             }
             for pos in [0.0, 1.0] {
                 let mut values = defaults;
