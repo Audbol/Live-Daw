@@ -151,7 +151,11 @@ with or endorsed by Behringer or Music Tribe; "WING" is their trademark.
   within a tenth of a second).
 - Processing models are recreated from the WING's parameter set (controls, ranges and
   behaviour), not circuit-modelled. The model tables are generated from the console's
-  published parameter map.
+  published parameter map. A model starts with the console's own defaults (the values
+  WING Edit, which runs the WING's firmware, gives it: a HALL starts at PRE DLY 50 ms,
+  DECAY 1.57 s, DAMPING 5k7 Hz), and FX RESET returns to them. Values read as on the
+  console: fixed decimals per parameter, kHz with the k as the decimal point
+  ("5k7 Hz", "2k99 Hz") and times in ms however long ("1503 ms").
 
 ## The surface
 

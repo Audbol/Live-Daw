@@ -123,7 +123,8 @@ impl ParamSpec {
         pos.clamp(0.0, 1.0)
     }
 
-    /// Text for a value, as the console shows it ("-20.0 dB", "1:2", "8k").
+    /// Text for a value, as the console shows it ("-20.0 dB", "1:2", "8k",
+    /// "5k7 Hz", "1503 ms"; see [`ParamSpec::console_text`]).
     pub fn display(&self, v: f32) -> String {
         let v = self.sanitise(v);
         match self.kind {
@@ -137,10 +138,88 @@ impl ParamSpec {
                 }
             }
             ParamKind::Toggle => if v >= 0.5 { "ON" } else { "OFF" }.into(),
-            ParamKind::Int => format!("{}", v as i64),
-            ParamKind::Linear | ParamKind::Log => format_number(v, self.unit),
+            ParamKind::Int | ParamKind::Linear | ParamKind::Log => self.console_text(v),
         }
     }
+}
+
+impl ParamSpec {
+    /// A number's text as the console's screens show it (the WING's own text
+    /// for the parameter, as its remote also writes it, with the unit): fixed
+    /// decimals per parameter, kHz with the k as the decimal point and times
+    /// in ms however long ("5k7 Hz", "1.57 s", "0.95", "50 ms", "1503 ms";
+    /// manual Fig. 124 and 132, WING Edit's DUCKER and DYNAMIC EQ).
+    pub fn console_text(&self, v: f32) -> String {
+        let v = self.sanitise(v);
+        let number = match self.kind {
+            ParamKind::Int => format!("{}", v as i64),
+            ParamKind::Linear | ParamKind::Log => {
+                let d = self.console_decimals().unwrap_or(if v.abs() >= 100.0 {
+                    0
+                } else if v.abs() >= 10.0 {
+                    1
+                } else {
+                    2
+                });
+                if self.unit == "Hz" {
+                    console_hz(v, d)
+                } else {
+                    format!("{v:.d$}")
+                }
+            }
+            _ => return self.display(v),
+        };
+        if self.unit.is_empty() {
+            number
+        } else {
+            format!("{number} {}", self.unit)
+        }
+    }
+
+    /// The decimals the console gives a float parameter: as many as a linear
+    /// step needs (0.1 -> 1, 0.25 -> 2, 5 -> 0); for a log one by its range
+    /// (two below 1, one below 10, none from 10 up and for ms; tenths of a
+    /// hertz for the fine EQ frequencies).
+    fn console_decimals(&self) -> Option<usize> {
+        if self.steps < 2 || self.max == self.min {
+            return None;
+        }
+        let lo = self.lo();
+        Some(match self.kind {
+            ParamKind::Linear => {
+                let step = (self.max - self.min).abs() as f64 / (self.steps - 1) as f64;
+                (0..3)
+                    .find(|&d| {
+                        let x = step * 10f64.powi(d);
+                        (x - x.round()).abs() < 1e-3 * x.max(1.0)
+                    })
+                    .unwrap_or(3) as usize
+            }
+            ParamKind::Log if self.unit == "Hz" && lo >= 10.0 => {
+                let per_decade = (self.steps - 1) as f32 / (self.max / self.min).abs().log10();
+                usize::from(self.steps % 2 == 1 && per_decade >= 319.0)
+            }
+            ParamKind::Log if lo < 1.0 => 2,
+            ParamKind::Log if self.unit == "ms" => 0,
+            ParamKind::Log if lo < 10.0 => 1,
+            ParamKind::Log => 0,
+            _ => return None,
+        })
+    }
+}
+
+/// Hertz as the console writes them: "84", "998.6", from 1 kHz up with the k
+/// as the decimal point and one digit more than the parameter's decimals
+/// ("5k7", "1k00", "20k00").
+fn console_hz(v: f32, decimals: usize) -> String {
+    let text = format!("{v:.decimals$}");
+    if text.parse::<f32>().is_ok_and(|r| r.abs() < 1000.0) {
+        return text;
+    }
+    let digits = decimals + 1;
+    let scale = 10i64.pow(digits as u32);
+    let n = (v as f64 / 1000.0 * scale as f64).round() as i64;
+    format!("{}k{:0digits$}", n / scale, n % scale)
 }
 
 fn format_number(v: f32, unit: &str) -> String {
@@ -328,7 +407,8 @@ mod tests {
         assert!(p.on("auto"));
         let rel = &comp.params[comp.param_index("rel").unwrap()];
         assert!((rel.from_normalised(rel.to_normalised(150.0)) - 150.0).abs() < 0.01);
-        assert_eq!(rel.display(1500.0), "1.50 s");
+        assert_eq!(rel.display(1500.0), "1500 ms");
+        assert_eq!(rel.display(rel.default), "150 ms");
         // A reverb's DECAY keeps two decimals, as the rack shows it.
         let decay =
             ParamSpec { id: "dcy", label: "DECAY", unit: "s", kind: ParamKind::Log, min: 0.1, max: 5.0, steps: 51, default: 1.8 };
@@ -337,6 +417,37 @@ mod tests {
         assert_eq!(parse_freq("35"), Some(35.0));
         assert_eq!(parse_freq("OFF"), None);
         assert!((dial_log(10.0, 30.0, 450.0) - 450.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn fx_values_read_as_the_console_writes_them() {
+        // The HALL at its defaults, as manual Fig. 124 shows it: PRE DLY 50 ms,
+        // SIZE 50, DECAY 1.57 s, BASS MULT 0.95, DAMPING 5k7 Hz, DIFFUSION 25.
+        let hall = &FX_MODELS[model_index(FX_MODELS, "HALL").unwrap()];
+        let text: Vec<String> = ["pdel", "size", "dcy", "mult", "damp", "diff"]
+            .iter()
+            .map(|id| {
+                let p = &hall.params[hall.param_index(id).unwrap()];
+                p.console_text(p.default)
+            })
+            .collect();
+        assert_eq!(text, ["50 ms", "50", "1.57 s", "0.95", "5k7 Hz", "25"]);
+        // DELAY/REVERB, Fig. 132: TIME 240 ms, PRE DLY 24 ms; times stay in ms.
+        let dr = &FX_MODELS[model_index(FX_MODELS, "DEL/REV").unwrap()];
+        let time = &dr.params[dr.param_index("time").unwrap()];
+        assert_eq!(time.console_text(time.default), "240 ms");
+        assert_eq!(time.console_text(1500.0), "1500 ms");
+        let pdel = &dr.params[dr.param_index("pdel").unwrap()];
+        assert_eq!(pdel.console_text(pdel.default), "24 ms");
+        // Rates below 1 Hz with two decimals, percentages whole, fine EQ frequencies in tenths.
+        let chorus = &FX_MODELS[model_index(FX_MODELS, "CHORUS").unwrap()];
+        let spd = &chorus.params[chorus.param_index("spd").unwrap()];
+        assert_eq!(spd.console_text(0.5), "0.50 Hz");
+        let mix = &chorus.params[chorus.param_index("mix").unwrap()];
+        assert_eq!(mix.console_text(50.0), "50 %");
+        let deq = &FX_MODELS[model_index(FX_MODELS, "DEQ3").unwrap()];
+        let f = &deq.params[deq.param_index("1-f").unwrap()];
+        assert_eq!((f.console_text(149.9788), f.console_text(1002.374)), ("150.0 Hz".into(), "1k00 Hz".into()));
     }
 
     #[test]
@@ -352,11 +463,11 @@ mod tests {
         let p = Params::new(gate, &v);
         assert_eq!(gate.name, "Wing Gate");
         assert_eq!((p.f("thr"), p.text("ratio"), p.f("range")), (-40.0, "1:3", 40.0));
-        assert_eq!((p.f("att"), p.f("hld"), p.f("rel"), p.f("acc")), (10.0, 10.0, 200.4749, 0.0));
+        assert_eq!((p.f("att"), p.f("hld"), p.f("rel"), p.f("acc")), (10.0, 10.0, 200.47488, 0.0));
         // COMP: ATTACK 50 ms, HOLD 20 ms, RELEASE 150 ms.
         let (comp, v) = values(DYN_MODELS, "COMP");
         let p = Params::new(comp, &v);
-        assert_eq!((p.f("att"), p.f("hld"), p.f("rel")), (50.0, 20.0, 150.3349));
+        assert_eq!((p.f("att"), p.f("hld"), p.f("rel")), (50.0, 20.0, 150.33495));
         // The channel EQ's bands on the frequency steps: band 4 reads 3k99 Hz.
         let (eq, v) = values(EQ_MODELS_CH, "STD");
         let p = Params::new(eq, &v);

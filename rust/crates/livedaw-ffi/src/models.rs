@@ -175,7 +175,7 @@ pub extern "C" fn ld_model_param_choice(t: i32, m: i32, p: i32, i: i32) -> *mut 
     LdString::new(s)
 }
 
-/// Console-style text for a value ("-20.0 dB", "1:2", "8k").
+/// Console-style text for a value ("-20.0 dB", "1:2", "8k", "5k7 Hz", "1503 ms").
 #[no_mangle]
 pub extern "C" fn ld_model_param_display(t: i32, m: i32, p: i32, value: f32) -> *mut LdString {
     LdString::new(param(t, m, p).map(|p| p.display(value)).unwrap_or_default())

@@ -226,6 +226,8 @@ mod tests {
         let spec = &FX_MODELS[model_index(FX_MODELS, "ROTARY").unwrap()];
         let mut v = [0.0; MAX_FX_PARAMS];
         spec.defaults_into(&mut v);
+        v[spec.param_index("dac").unwrap()] = 50.0;
+        v[spec.param_index("hac").unwrap()] = 50.0;
         let mut rot = Rotary::new(FxContext { sample_rate: sr, max_block: 480 });
         rot.set_params(&Params::new(spec, &v));
         let (slow, fast) = (v[spec.param_index("lo").unwrap()], v[spec.param_index("hi").unwrap()]);
@@ -267,6 +269,7 @@ mod tests {
             let mut v = [0.0; MAX_FX_PARAMS];
             spec.defaults_into(&mut v);
             v[spec.param_index("bal").unwrap()] = bal;
+            v[spec.param_index("mix").unwrap()] = 100.0;
             let mut rot = Rotary::new(FxContext { sample_rate: sr, max_block: 480 });
             rot.set_params(&Params::new(spec, &v));
             let mut l: Vec<f32> = (0..48_000).map(|i| 0.3 * (std::f32::consts::TAU * hz * i as f32 / sr).sin()).collect();

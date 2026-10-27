@@ -256,7 +256,7 @@ mod tests {
 
     #[test]
     fn types_and_envelope() {
-        let base = [("fbase", 500.0), ("env", 0.0), ("reso", 0.0), ("drv", 0.0)];
+        let base = [("fbase", 500.0), ("env", 0.0), ("reso", 0.0), ("drv", 0.0), ("lfo", 0.0)];
         let with = |extra: &[(&'static str, f32)]| -> Vec<(&'static str, f32)> { base.iter().chain(extra).copied().collect() };
         let lp = with(&[("filt", 0.0)]);
         assert!(rms_out(&lp, 5000.0, 0.3) < 0.05 * rms_out(&lp, 100.0, 0.3));
@@ -265,7 +265,7 @@ mod tests {
         let notch = with(&[("filt", 3.0)]);
         assert!(rms_out(&notch, 500.0, 0.3) < 0.1 * rms_out(&notch, 4000.0, 0.3));
         // ENV opens the low-pass for loud signals only.
-        let env = [("fbase", 300.0), ("env", 100.0), ("reso", 0.0), ("drv", 0.0)];
+        let env = [("fbase", 300.0), ("env", 100.0), ("reso", 0.0), ("drv", 0.0), ("lfo", 0.0)];
         assert!(rms_out(&env, 3000.0, 0.6) > 10.0 * rms_out(&env, 3000.0, 0.01));
     }
 }

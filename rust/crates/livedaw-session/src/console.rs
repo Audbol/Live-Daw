@@ -812,6 +812,10 @@ pub(crate) fn capture_fx_slot(engine: &Engine, i: usize, bridge: &mut dyn Plugin
     put_i(&mut x, "sendR", &p.send_right);
     // EXT's parameters too: the outboard insert, and the SOURCE.
     put_model_params(&mut x, &FX_MODELS[model], &p.values);
+    if FX_MODELS[model].token == "PCORR" {
+        // PITCH FIX's note keys: on = the note is disabled (older files: enabled).
+        x.set("keys", "disable");
+    }
     if model != FX_EXT || !engine.fx(i).is_some_and(|r| r.is_loaded()) {
         return x;
     }
@@ -879,6 +883,14 @@ pub(crate) fn apply_fx_slot(
             bridge.clear_fx(i);
         }
         get_model_params(x, FX_MODELS, current, &p.values, |m| p.set_model(m, true));
+        if FX_MODELS[saved].token == "PCORR" && x.attr("keys").is_none() {
+            // Saved when a PITCH FIX key switched on enabled its note.
+            for (sp, v) in FX_MODELS[saved].params.iter().zip(&p.values) {
+                if sp.id.starts_with("sw_") {
+                    v.store(if v.load() >= 0.5 { 0.0 } else { 1.0 });
+                }
+            }
+        }
         if !engine.set_fx_model(i, saved, false) {
             warnings.push(format!("FX {}: {} needs a premium slot (FX 1-8)", i + 1, FX_MODELS[saved].name));
             engine.set_fx_model(i, FX_NONE, true);

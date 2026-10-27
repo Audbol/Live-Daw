@@ -263,14 +263,21 @@ impl FxAlgo for TripleDeq {
 mod tests {
     use super::super::tests::Rig;
 
+    /// Band 2 at 2 kHz cutting 6 dB above -20 dB (fast times, Q 1.5).
+    fn band2() -> Rig {
+        let mut rig = Rig::new("DEQ3");
+        rig.set("2-g", -6.0).set("2-f", 2000.0).set("2-q", 1.5).set("2-att", 10.0).set("2-rel", 200.0);
+        rig
+    }
+
     #[test]
     fn cuts_loud_bands_only() {
         // Band 2 (2 kHz, -6 dB above -20 dB).
-        let mut rig = Rig::new("DEQ3");
+        let mut rig = band2();
         let loud = rig.sine_gain_db(2000.0, 0.5);
         assert!(loud < -4.0 && loud > -6.5, "{loud}");
         assert!(rig.dev.meter() < -4.0);
-        let mut rig = Rig::new("DEQ3");
+        let mut rig = band2();
         let quiet = rig.sine_gain_db(2000.0, 0.01);
         assert!(quiet.abs() < 0.1, "{quiet}");
     }
@@ -278,7 +285,7 @@ mod tests {
     #[test]
     fn flat_band_is_full_range() {
         // Band 2 Flat, the others out of the way: a downward compressor on everything.
-        let mut rig = Rig::new("DEQ3");
+        let mut rig = band2();
         rig.set("1-g", 0.0).set("3-g", 0.0).set("2-filt", 0.0);
         for f in [100.0, 2000.0, 10_000.0] {
             let mut rig2 = Rig::new("DEQ3");
@@ -308,7 +315,7 @@ mod tests {
 
     #[test]
     fn low_mode_lifts_quiet_bands() {
-        let mut rig = Rig::new("DEQ3");
+        let mut rig = band2();
         rig.set("2-mode", 0.0).set("2-g", 6.0).set("2-ratio", 6.0).set("2-thr", -10.0);
         let quiet = rig.sine_gain_db(2000.0, 0.01);
         assert!(quiet > 5.0, "{quiet}");

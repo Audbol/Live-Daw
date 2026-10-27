@@ -289,7 +289,8 @@ cd rust && RUSTFLAGS=-Zsanitizer=thread cargo +nightly test -Zbuild-std --target
 - `tools/wing/gen_tree.py` and `tools/wing/gen_models.py` regenerate the WING
   parameter tree (`rust/crates/livedaw-wing/data/wing_tree.bin`) and the processing
   model tables (`rust/crates/livedaw-dsp/src/wing/models_gen.rs`) from libwing's
-  parameter sweep (`propmap.jsonl`).
+  parameter sweep (`propmap.jsonl`); the models' defaults come from
+  `tools/wing/model_defaults.json` (captured from WING Edit).
 - `tools/wing/libwing_tools.sh DIR` builds libwing's command-line clients and
   `tools/wing/oscprobe.rs`; then
   `LIBWING_TOOLS=DIR/tools/target/release cargo test -p livedaw-wing --test libwing`

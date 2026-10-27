@@ -213,6 +213,27 @@ All notable changes to Sidecar are listed here. Versions follow
 
 ### Changed
 
+- Every processing and FX model starts with the WING's own defaults: 98 of the 113
+  models (all but the WING GATE, WING COMPRESSOR, WING EQ and a few others) started
+  with values of our own. The defaults are what WING Edit 3.3.4, which runs the
+  console's firmware, gives each model (they match a factory-set WING and the manual's
+  figures: a HALL at PRE DLY 50 ms, SIZE 50, DECAY 1.57 s, BASS MULT 0.95, DAMPING
+  5k7 Hz, DIFFUSION 25, Fig. 124; DELAY/REVERB at 240 ms, Fig. 132). FX RESET and a
+  newly chosen model use them; saved shows keep their values. Some that change the
+  sound: the DUCKER at -20 dB, RANGE 20, ATTACK 100 ms; the analog EQs' frequencies;
+  MACH EQ4 with AUTO on and AIR 40k; the channel strips (EVEN, SOUL, VINTAGE, BUS,
+  MASTERING) with their EQ and dynamics blocks off; the MOOD FILTER's LFO at 100 %;
+  PRECISION LIMITER (and MASTERING's) at OUT -0.5 dB with AUTO GAIN. The generator
+  takes them from `tools/wing/model_defaults.json`.
+- Model values read as the console writes them: each parameter with its own fixed
+  decimals, kHz with the k as the decimal point and times in ms however long (DAMPING
+  "5k7 Hz", a DYNAMIC EQ at "2k99 Hz" and "1216 ms", a DUCKER's RELEASE "1503 ms"),
+  as WING Edit's DUCKER and DYNAMIC EQ and the manual's HALL and DELAY/REVERB show
+  them. They read "5.68 kHz", "2.99 kHz" and "1.50 s", and integers such as PRE DLY
+  had no unit ("50", now "50 ms"). The BLUE PLATE's second display says HZ.
+- PITCH FIX: a note key switched on disables that note (the console starts with all
+  keys off and every note corrected); it was the other way round. Shows and FX presets
+  saved before keep the notes they corrected.
 - F1-F3 of the 4-Channel section with USE F1-F3 AS CUSTOM CONTROLS mirror the custom
   control layers 1-3 (encoders and upper keys), as the manual describes (5.5 p. 48);
   they were three layers of their own. Shows saved before move those assignments to
@@ -244,6 +265,10 @@ All notable changes to Sidecar are listed here. Versions follow
 
 ### Fixed
 
+- ETERNAL BLISS compressed a steady tone far less than its curve at short releases (at
+  its default RELEASE 102 ms, 0.3 dB instead of 2 dB at 3 dB over the threshold): its
+  constant-rate release climbed back through every trough of the waveform. The
+  detector now holds a peak for 10 ms before releasing.
 - WING REMOTE: a processing or FX model changed right after a client connected (before
   the first change poll) now sends all of the new model's parameters, as later changes
   do; parameters that happened to equal the old model's could be left out.

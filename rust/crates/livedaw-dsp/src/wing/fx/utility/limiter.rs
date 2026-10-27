@@ -290,6 +290,7 @@ mod tests {
     #[test]
     fn quiet_signals_pass_delayed() {
         let mut rig = Rig::new("LIMITER");
+        rig.set("gout", 0.0).set("again", 0.0);
         let n = 4800;
         let x: Vec<f32> = (0..n).map(|i| (TAU * 440.0 * i as f32 / 48_000.0).sin() * 0.1).collect();
         let (mut l, mut r) = (x.clone(), x.clone());

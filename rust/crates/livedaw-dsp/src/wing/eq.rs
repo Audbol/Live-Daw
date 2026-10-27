@@ -629,13 +629,13 @@ mod tests {
     #[test]
     fn analog_models_respond() {
         let cases: &[Case] = &[
-            (EQ_MODELS_CH, "SOUL", &[("lmg", 5.0), ("lmf", 5.0)], 700.0, 10.0),
+            (EQ_MODELS_CH, "SOUL", &[("lmg", 5.0), ("lmf", 5.0), ("lmf3", 0.0)], 700.0, 10.0),
             (EQ_MODELS_CH, "E84", &[("mg", 5.0)], 1600.0, 12.0),
-            (EQ_MODELS_CH, "PULSAR", &[("1lb", 10.0)], 30.0, 10.0),
-            (EQ_MODELS_CH, "MACH4", &[("650", 5.0)], 650.0, 10.0),
+            (EQ_MODELS_CH, "PULSAR", &[("1lb", 10.0), ("1lf", 2.0)], 30.0, 10.0),
+            (EQ_MODELS_CH, "MACH4", &[("650", 5.0), ("again", 0.0)], 650.0, 10.0),
             (EQ_MODELS_BUS, "PIA", &[("1k", 6.0)], 1000.0, 5.0),
-            (EQ_MODELS_CH, "F110", &[("hmg", -5.0)], 1897.0, -14.0),
-            (EQ_MODELS_CH, "E88", &[("hg", 5.0)], 16000.0, 10.0),
+            (EQ_MODELS_CH, "F110", &[("hmg", -5.0), ("hmf", 5.0)], 1897.0, -14.0),
+            (EQ_MODELS_CH, "E88", &[("hg", 5.0), ("hf", 5.0)], 16000.0, 10.0),
         ];
         for (table, token, sets, freq, at_least) in cases {
             let (m, mut v) = defaults(table, token);
@@ -672,14 +672,14 @@ mod tests {
         // Full gain: the proportional-Q factor is 1, so the Q is the knob's.
         let f = dial_log(5.0, 200.0, 2500.0);
         for (dial, q) in [(0.0, 2.5), (10.0, 0.3)] {
-            let d = designed(EQ_MODELS_CH, "SOUL", &[("lmg", 5.0), ("lmq", dial)]);
+            let d = designed(EQ_MODELS_CH, "SOUL", &[("lmg", 5.0), ("lmq", dial), ("lmf", 5.0), ("lmf3", 0.0)]);
             let want = BiquadCoeffs::peak(SR, f as f64, q, 15.0);
             let (a, b) = (d.response_db(2.0 * f as f64, SR), 20.0 * want.magnitude_at(2.0 * f as f64, SR).log10());
             assert!((a - b).abs() < 0.01, "dial {dial}: {a} vs {b}");
         }
         // ... and narrower again as the gain goes up.
-        let soft = designed(EQ_MODELS_CH, "SOUL", &[("lmg", 1.0)]);
-        let hard = designed(EQ_MODELS_CH, "SOUL", &[("lmg", 5.0)]);
+        let soft = designed(EQ_MODELS_CH, "SOUL", &[("lmg", 1.0), ("lmf", 5.0), ("lmf3", 0.0)]);
+        let hard = designed(EQ_MODELS_CH, "SOUL", &[("lmg", 5.0), ("lmf", 5.0), ("lmf3", 0.0)]);
         let at = |d: &EqDesign, g: f64| d.response_db(2.0 * f as f64, SR) / g;
         assert!(at(&hard, 15.0) < at(&soft, 3.0));
     }
@@ -697,7 +697,7 @@ mod tests {
             (shelf, low, BiquadCoeffs::low_shelf(SR, f, 0.7, 15.0)),
             (shelf, high, BiquadCoeffs::low_shelf(SR, f, 2.0, 15.0)),
         ] {
-            let d = designed(EQ_MODELS_CH, "E88", &[("lg", 5.0), ("lt", lt), ("lq", lq)]);
+            let d = designed(EQ_MODELS_CH, "E88", &[("lf", 5.0), ("lg", 5.0), ("lt", lt), ("lq", lq)]);
             for x in [f / 3.0, f * 1.5, f * 3.0] {
                 let b = 20.0 * want.magnitude_at(x, SR).log10();
                 assert!((d.response_db(x, SR) - b).abs() < 0.01, "lt {lt} lq {lq} at {x}");
@@ -708,11 +708,12 @@ mod tests {
     #[test]
     fn even84_band_ranges() {
         // LOW +-15 dB, MID +-20 dB, HIGH +-20 dB (p.97).
-        let low = designed(EQ_MODELS_CH, "E84", &[("lg", 5.0)]);
+        let (lf, hf) = (choice(EQ_MODELS_CH, "E84", "lf", "60"), choice(EQ_MODELS_CH, "E84", "hf", "12k"));
+        let low = designed(EQ_MODELS_CH, "E84", &[("lf", lf), ("lg", 5.0)]);
         assert!((low.response_db(10.0, SR) - 15.0).abs() < 0.3);
         let mid = designed(EQ_MODELS_CH, "E84", &[("mg", -5.0)]);
         assert!((mid.response_db(1600.0, SR) + 20.0).abs() < 0.05);
-        let high = designed(EQ_MODELS_CH, "E84", &[("hg", 5.0)]);
+        let high = designed(EQ_MODELS_CH, "E84", &[("hf", hf), ("hg", 5.0)]);
         assert!((high.response_db(22000.0, SR) - 20.0).abs() < 0.5);
     }
 
@@ -756,7 +757,7 @@ mod tests {
     #[test]
     fn pulsar_low_boost_and_cut_dip() {
         // Boost and cut together: a low-end boost with a dip just above it (p.98).
-        let d = designed(EQ_MODELS_CH, "PULSAR", &[("1lb", 10.0), ("1latt", 5.0)]);
+        let d = designed(EQ_MODELS_CH, "PULSAR", &[("1lb", 10.0), ("1latt", 5.0), ("1lf", 2.0)]);
         assert!(d.response_db(30.0, SR) > 3.0);
         assert!(d.response_db(100.0, SR) < -3.0);
         // HI WIDTH: low values narrower.
@@ -768,16 +769,16 @@ mod tests {
     #[test]
     fn mach4_bands_and_auto_gain() {
         // SUB is a bell (it falls back below its frequency), 2.5 kHz a shelf (p.100).
-        let sub = designed(EQ_MODELS_CH, "MACH4", &[("sub", 5.0)]);
+        let sub = designed(EQ_MODELS_CH, "MACH4", &[("sub", 5.0), ("again", 0.0)]);
         assert!((sub.response_db(10.0, SR) - 12.5).abs() < 0.1);
         assert!(sub.response_db(1.0, SR) < 3.0);
-        let hi = designed(EQ_MODELS_CH, "MACH4", &[("2k5", 5.0)]);
+        let hi = designed(EQ_MODELS_CH, "MACH4", &[("2k5", 5.0), ("again", 0.0)]);
         assert!((hi.response_db(20000.0, SR) - 12.5).abs() < 0.5);
         assert!(hi.response_db(100.0, SR).abs() < 0.1);
         // AUTO cancels the EQ's overall level change.
-        let sets = [("2k5", 5.0), ("40", 3.0), ("air", 6.0)];
-        let plain = designed(EQ_MODELS_CH, "MACH4", &sets);
-        let auto = designed(EQ_MODELS_CH, "MACH4", &[sets[0], sets[1], sets[2], ("again", 1.0)]);
+        let sets = [("2k5", 5.0), ("40", 3.0), ("air", 6.0), ("airm", 3.0)];
+        let plain = designed(EQ_MODELS_CH, "MACH4", &[sets[0], sets[1], sets[2], sets[3], ("again", 0.0)]);
+        let auto = designed(EQ_MODELS_CH, "MACH4", &[sets[0], sets[1], sets[2], sets[3], ("again", 1.0)]);
         let mean = |d: &EqDesign| (0..10).map(|i| d.response_db(31.25 * f64::from(1u32 << i), SR)).sum::<f64>() / 10.0;
         assert!(mean(&plain) > 3.0);
         assert!(mean(&auto).abs() < 1e-3, "{}", mean(&auto));

@@ -64,7 +64,7 @@ mod tests {
     #[test]
     fn dimension_bypass_and_wet() {
         // No switch pressed and DRY on: the signal passes untouched.
-        let (mut dev, v) = device("DIMCRS", &[("sw2", 0.0)]);
+        let (mut dev, v) = device("DIMCRS", &[("sw1", 0.0), ("sw2", 0.0), ("sw3", 0.0), ("sw4", 0.0), ("drysw", 1.0)]);
         let input: Vec<f32> = (0..4800).map(|i| (i as f32 * 0.05).sin() * 0.5).collect();
         let (mut l, mut r) = (input.clone(), input.clone());
         dev.process(&v, &mut l, &mut r);
@@ -84,7 +84,10 @@ mod tests {
     #[test]
     fn flanger_sweeps() {
         // The flanger's comb moves across a steady tone, so its level wobbles.
-        let (mut dev, v) = device("FLANGER", &[("spd", 2.0), ("feed", 0.0)]);
+        let (mut dev, v) = device(
+            "FLANGER",
+            &[("spd", 2.0), ("feed", 0.0), ("dlyl", 2.0), ("dlyr", 3.0), ("depl", 60.0), ("lc", 20.0), ("hc", 20_000.0)],
+        );
         let mut levels = Vec::new();
         for b in 0..200 {
             let mut l: Vec<f32> = (0..480).map(|i| 0.5 * (TAU * 1500.0 * (b * 480 + i) as f32 / 48_000.0).sin()).collect();

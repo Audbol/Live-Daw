@@ -597,7 +597,7 @@ impl FxAlgo for DoubleVocal {
 
 // ---- PCORR: Pitch Fix -----------------------------------------------------------------
 
-/// Pitch class of each note switch (sw_c = C ... sw_b = B).
+/// Pitch class of each note switch (sw_c = C ... sw_b = B); on = the note is disabled.
 const NOTE_IDS: [&str; 12] =
     ["sw_c", "sw_db", "sw_d", "sw_eb", "sw_e", "sw_f", "sw_gb", "sw_g", "sw_ab", "sw_a", "sw_bb", "sw_b"];
 
@@ -695,8 +695,10 @@ impl FxAlgo for PitchFix {
         self.retune = coef(retune_ms / 2.3, self.sr);
         self.amount = (p.f("amnt") * 0.01).clamp(0.0, 1.0);
         self.a4 = p.f("a4").clamp(400.0, 480.0);
+        // A key switched on disables its note: the console starts with every
+        // switch off and every note corrected (WING Edit's defaults).
         for (a, id) in self.allowed.iter_mut().zip(NOTE_IDS) {
-            *a = p.on(id);
+            *a = !p.on(id);
         }
     }
 
@@ -824,7 +826,8 @@ mod tests {
         let sr = 48_000.0;
         // 30 cents flat of A4: corrected to 440 Hz.
         let input = sine(440.0 * 2f32.powf(-0.3 / 12.0), 2.0, 0.3, sr);
-        let (l, _) = render("PCORR", &[], &input, sr);
+        let full = [("amnt", 100.0), ("spd", 20.0)];
+        let (l, _) = render("PCORR", &full, &input, sr);
         let hz = frequency(&l[48_000..], sr);
         let cents = 1200.0 * (hz / 440.0).log2();
         assert!(cents.abs() < 3.0, "{hz} Hz, {cents} cents");
@@ -833,22 +836,22 @@ mod tests {
         let cents = 1200.0 * (frequency(&l[48_000..], sr) / 440.0).log2();
         assert!((cents + 30.0).abs() < 3.0, "{cents}");
         // A disabled key leaves input in that note's range alone ...
-        let (l, _) = render("PCORR", &[("sw_a", 0.0)], &input, sr);
+        let (l, _) = render("PCORR", &[full[0], full[1], ("sw_a", 1.0)], &input, sr);
         let cents = 1200.0 * (frequency(&l[48_000..], sr) / 440.0).log2();
         assert!((cents + 30.0).abs() < 3.0, "{cents}");
         // ... while the other keys still correct.
-        let (l, _) = render("PCORR", &[("sw_g", 0.0)], &input, sr);
+        let (l, _) = render("PCORR", &[full[0], full[1], ("sw_g", 1.0)], &input, sr);
         let cents = 1200.0 * (frequency(&l[48_000..], sr) / 440.0).log2();
         assert!(cents.abs() < 3.0, "{cents}");
         // SPEED: higher is faster.
         let early = |spd: f32| {
-            let (l, _) = render("PCORR", &[("spd", spd)], &input, sr);
+            let (l, _) = render("PCORR", &[full[0], ("spd", spd)], &input, sr);
             (1200.0 * (frequency(&l[2400..4800], sr) / 440.0).log2()).abs()
         };
         let (fast, slow) = (early(100.0), early(1.0));
         assert!(fast < 5.0 && slow > 12.0, "fast {fast}, slow {slow}");
         // A4 PITCH moves the reference.
-        let (l, _) = render("PCORR", &[("a4", 432.0)], &sine(437.0, 2.0, 0.3, sr), sr);
+        let (l, _) = render("PCORR", &[full[0], full[1], ("a4", 432.0)], &sine(437.0, 2.0, 0.3, sr), sr);
         assert!((frequency(&l[48_000..], sr) - 432.0).abs() < 1.5);
     }
 
@@ -883,7 +886,7 @@ mod tests {
     fn psycho_bass_adds_harmonics() {
         let sr = 48_000.0;
         let input = sine(50.0, 1.5, 0.5, sr);
-        let (l, _) = render("P-BASS", &[], &input, sr);
+        let (l, _) = render("P-BASS", &[("int", -6.0), ("bass", -20.0), ("xf", 80.0)], &input, sr);
         let tail = &l[36_000..];
         // The fundamental is mostly removed (BASS GAIN -20 dB) and its
         // harmonics appear above the crossover.

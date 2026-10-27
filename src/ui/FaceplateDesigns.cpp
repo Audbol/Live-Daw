@@ -1585,7 +1585,7 @@ namespace
         d.box (66, 160, 106, 30, Look::Fill, 0xff1f50e8);
         d.text ("REVERB", 66, 160, 106, 30, 21, kWhite, Look::SerifItalic);
         const juce::uint32 cyan = 0xff40e0f0;
-        for (auto [x, param, label, unit] : { std::tuple { 195.0f, 2, "DECAY", "S" }, { 572.0f, 4, "DAMPING", "KHZ" } }) // DAMPING runs 1 .. 20 kHz
+        for (auto [x, param, label, unit] : { std::tuple { 195.0f, 2, "DECAY", "S" }, { 572.0f, 4, "DAMPING", "HZ" } }) // "5K7 HZ", as the console writes kHz
         {
             d.box (x, 108, 310, 100, Look::Fill, 0xff060808, 0xff2a2a2a, 2.0f);
             segmentValue (d, param, x + 10, 118, 160, 80, 58, cyan);

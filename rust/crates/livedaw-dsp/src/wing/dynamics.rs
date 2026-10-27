@@ -163,6 +163,8 @@ const WING_COMP_DELAY_MS: f32 = 0.25;
 const WING_GATE_DELAY_MS: f32 = 0.1;
 /// Decay of the WING's peak detector (ms).
 const WING_PEAK_DECAY_MS: f32 = 0.5;
+/// How long the ETERNAL BLISS's detector holds a peak before its release runs.
+const BLISS_PEAK_HOLD_MS: f32 = 10.0;
 /// Averaging of the COMP's RMS detector (ms): KNEE-free 2:1 and 10:1 lag a
 /// pure exponential attack by about a millisecond, as a 5 ms mean square does.
 const WING_RMS_MS: f32 = 5.0;
@@ -818,6 +820,10 @@ fn configure(spec: &ModelSpec, v: &[f32], sr: f32) -> Config {
             }
             let rate = 10.0 / (p.f("rel") * 0.001);
             c.release = if p.on("alog") { Release::AntiLog(rate) } else { Release::Rate(rate) };
+            // The peak detector holds between a waveform's peaks (down to 50 Hz),
+            // so a constant-rate release doesn't climb back through every
+            // trough: a steady tone sits on the curve even at short releases.
+            c.hold = (BLISS_PEAK_HOLD_MS * 0.001 * sr) as u32;
             if p.on("glon") {
                 c.max_gr = -p.f("glim");
             }
@@ -2583,7 +2589,20 @@ mod tests {
 
     #[test]
     fn expander_attack_restores_and_release_reduces() {
-        let (m, v) = model("EXP", &[("thr", "-40"), ("ratio", "2"), ("knee", "0"), ("att", "1"), ("hld", "1"), ("rel", "1000")]);
+        let (m, v) = model(
+            "EXP",
+            &[
+                ("thr", "-40"),
+                ("ratio", "2"),
+                ("knee", "0"),
+                ("att", "1"),
+                ("hld", "1"),
+                ("rel", "1000"),
+                ("det", "PEAK"),
+                ("env", "LIN"),
+                ("auto", "0"),
+            ],
+        );
         let mut d = WingDynamics::default();
         d.prepare(48000.0);
         run_on(&mut d, m, &v, &sine(0.5, 1000.0, 4800));
@@ -3211,7 +3230,9 @@ mod tests {
                 continue;
             }
             for amp_db in [-50.0f32, -30.0, -12.0, -3.0] {
-                let input = sine(db_to_gain(amp_db), 1000.0, 48000 * 3);
+                // Long enough for the slowest default release to settle (the
+                // SOUL 9000 GATE's 806 ms closing 40 dB).
+                let input = sine(db_to_gain(amp_db), 1000.0, 48000 * 6);
                 let (out, st) = run_full(m, &v, &input, 1.0, 0.0);
                 let measured = gain_to_db(rms_tail(&out) / rms_tail(&input));
                 let want = static_output_db(m, &v, st.key_db).unwrap() - st.key_db;
