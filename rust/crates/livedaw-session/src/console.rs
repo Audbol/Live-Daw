@@ -394,6 +394,7 @@ fn capture_strip(s: &Strip, sections: u32, slots: &[usize]) -> Element {
             put_i(r, "altL", &p.alt_input_left);
             put_i(r, "altR", &p.alt_input_right);
             put_b(r, "altSel", &p.alt_selected);
+            put_b(r, "srcAuto", &p.src_auto);
         }
     }
     if sections & PREAMP != 0 {
@@ -689,18 +690,32 @@ fn apply_monitor(engine: &Engine, parent: &Element) {
     }
 }
 
-/// INPUT SELECT: global or per strip, and the global MAIN / ALT switch
-/// (scenes recall them with ROUTING).
+/// INPUT SELECT: the global MAIN / ALT switch (scenes recall it with ROUTING;
+/// each strip's GLOBAL INPUT SELECT ENABLE, `srcAuto`, is the strip's, and
+/// GLOBAL INPUT SELECT OVERRIDE a preference).
 fn capture_input_select(engine: &Engine, parent: &mut Element) {
     let i = parent.add_new("InputSelect");
-    put_b(i, "global", &engine.controls.input_select_global);
     put_b(i, "alt", &engine.controls.global_alt);
 }
 
+/// After the strips: shows and scenes from before GLOBAL INPUT SELECT ENABLE
+/// had one console-wide `global` (every input strip follows the global
+/// switch); they load with every input and aux channel GLOBAL and on the
+/// switch's MAIN / ALT, or every one INDIVIDUAL, so they sound as then.
 fn apply_input_select(engine: &Engine, parent: &Element) {
-    if let Some(i) = parent.child("InputSelect") {
-        get_b(i, "global", &engine.controls.input_select_global);
-        get_b(i, "alt", &engine.controls.global_alt);
+    let Some(i) = parent.child("InputSelect") else { return };
+    get_b(i, "alt", &engine.controls.global_alt);
+    if !i.has_attr("global") {
+        return;
+    }
+    let (global, alt) = (i.bool_or("global", false), engine.controls.global_alt.load(Relaxed));
+    for kind in [StripKind::Channel, StripKind::Aux] {
+        for s in engine.strips(kind) {
+            s.params.src_auto.store(global, Relaxed);
+            if global {
+                s.params.alt_selected.store(alt, Relaxed);
+            }
+        }
     }
 }
 
@@ -725,6 +740,7 @@ fn capture_prefs(engine: &Engine, parent: &mut Element) {
     put_b(p, "dcaMuteGroups", &c.dca_mute_groups);
     put_i(p, "mainLink", &c.main_link);
     put_b(p, "startupMainMute", &c.startup_main_mute);
+    put_b(p, "inputSelectOverride", &c.input_select_override);
 }
 
 fn apply_prefs(engine: &Engine, parent: &Element) {
@@ -733,6 +749,7 @@ fn apply_prefs(engine: &Engine, parent: &Element) {
         get_b(p, "dcaMuteGroups", &c.dca_mute_groups);
         get_i(p, "mainLink", &c.main_link);
         get_b(p, "startupMainMute", &c.startup_main_mute);
+        get_b(p, "inputSelectOverride", &c.input_select_override);
     }
 }
 
@@ -985,6 +1002,7 @@ fn apply_strip(
         get_i(r, "altL", &p.alt_input_left);
         get_i(r, "altR", &p.alt_input_right);
         get_b(r, "altSel", &p.alt_selected);
+        get_b(r, "srcAuto", &p.src_auto);
     }
     if sections & PREAMP != 0 {
         if let Some(i) = e.child("In") {
@@ -1259,12 +1277,7 @@ pub fn load_console(engine: &Engine, console: &Element, bridge: &mut dyn PluginB
     get_b(console, "outputProtection", &engine.controls.output_protection);
     get_f(console, "outputCeilingDb", &engine.controls.output_ceiling_db);
     apply_monitor(engine, console);
-    apply_input_select(engine, console);
     crate::globals::apply_routing(engine, console);
-    if console.child("InputSelect").is_none() {
-        // Saved before INPUT SELECT: per strip, as then (a new console has it GLOBAL).
-        engine.controls.input_select_global.store(false, Relaxed);
-    }
     apply_prefs(engine, console);
     apply_rta(engine, console);
     apply_automix(engine, console);
@@ -1304,6 +1317,7 @@ pub fn load_console(engine: &Engine, console: &Element, bridge: &mut dyn PluginB
         apply_strip(engine, &s, e, section::ALL, &mut None, &mut result);
         s.params.recall_safe.store(e.bool_or("recallSafe", false), Relaxed);
     }
+    apply_input_select(engine, console);
     crate::globals::apply(engine, console);
     if let Some(x) = console.child("IoSafes") {
         engine.io_safes().sources.set_ranges(x.str_or("sources", ""));

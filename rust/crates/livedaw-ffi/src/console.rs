@@ -129,6 +129,15 @@ pub unsafe extern "C" fn ld_engine_press_mute(e: *const Engine, s: *const Strip)
     }
 }
 
+/// Message thread: the global MAIN / ALT switch (WING `/io/altsw`): switches
+/// the input and aux channels in GLOBAL INPUT SELECT ENABLE (ABI 22).
+#[no_mangle]
+pub unsafe extern "C" fn ld_engine_set_global_alt(e: *const Engine, alt: bool) {
+    if let Some(e) = engine(e) {
+        guard((), || e.set_global_alt(alt));
+    }
+}
+
 /// The monitor paths (bit 0 = SPEAKERS, bit 1 = PHONES) whose level DCA `dca`
 /// controls (named MON A: PHONES, MON B: SPEAKERS, MON LVL: both).
 #[no_mangle]

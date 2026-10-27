@@ -325,7 +325,8 @@ like the finish. The COMPACT is black, so it always shows the black finish. It f
     MAIN tile on the INPUT screen opens **SELECT MAIN INPUT**: the source groups, NONE,
     the source's M / ST / M/S pairing, and COPY CUSTOMIZATION between the channel and
     its source (<< and >>). The slot screens follow chapter 6 of the manual: INPUT (CHANNEL
-    INPUT, TRIM & BALANCE pad, FILTER, DELAY), FILTER SETUP, GATE / COMP with the
+    INPUT with MAIN / ALT and INPUT SELECT INDIVIDUAL / GLOBAL, TRIM & BALANCE pad,
+    FILTER, DELAY), FILTER SETUP, GATE / COMP with the
     model's faceplate (the KEY FILTER and XOVER MODE `>` keys open GATE KEY FILTER /
     COMP XOVER with the filter's response, FREQ and, for a band pass, notch or PEAK, Q
     (the crossover's DEPTH too) in boxes and on the knobs; for PEAK the XOVER page draws
@@ -362,7 +363,8 @@ like the finish. The COMPACT is black, so it always shows the black finish. It f
     MAIN and MATRIX, with number keys in the strips' colours (select) and M keys (mute).
     **SETTINGS** in the status bar sets PRE or POST for CHANNELS (and aux), BUSES, MAINS,
     MATRICES and DCAS, as on the console: PRE for channels and DCAs, POST for the others
-    at first (the same settings as SETUP > SURFACE > METERING). A group's header opens
+    at first; the surface's meters have their own (SETUP > SURFACE > METERING), as on
+    the console. A group's header opens
     its section's FADERS screen. Bigger consoles page.
   - **How the meters move:** every level meter (the screens, the fader strips' and the
     channel strip's LEDs, the main meter, ROUTING's tiles, the remote meter stream)
@@ -442,10 +444,13 @@ like the finish. The COMPACT is black, so it always shows the black finish. It f
     1-2 (the console uses LOCAL OUT 7-8 and feeds buses 1-6 to 1-6).
   - **SETUP:** GENERAL (lighting, clock, console info and size, the surface's finish
     SILVER / BLACK, the console model FULL / COMPACT, OPERATION, OPTIONS),
-    AUDIO (clock rate, INPUT SELECT: the global MAIN / ALT switch and each channel's,
+    AUDIO (clock rate, INPUT SELECT: the global MAIN / ALT switch, and the channel grid,
+    which opens the INPUT SELECT window: MAIN/ALT INPUT switches a channel, GLOBAL
+    INPUT SELECT ENABLE puts it under the global switch, as HOME's INDIVIDUAL / GLOBAL;
     preferences such as MAIN LINK, DCA MUTEGROUPS, MUTEGROUP/SIP OVERRIDE, GLOBAL INPUT
-    SELECT OVERRIDE, SOURCE SOLO (CH39 / AUX7) and the TALKBACK channel, SOLO SYSTEM with SOLO MODE LIVE / STUDIO /
-    SIP, PFL/AFL per strip type and the solo / select preferences, audio device,
+    SELECT OVERRIDE (on: a GLOBAL channel's own MAIN / ALT still works; off: only the
+    global switch moves it), SOURCE SOLO (CH39 / AUX7) and the TALKBACK channel, SOLO SYSTEM with SOLO MODE LIVE / STUDIO /
+    SIP, PFL/AFL per strip type and the solo / select preferences (BUS SoF/SPILL ACTIVATES SOLO: Sends on Fader or a spill of a bus or main solos it), audio device,
     AUTOMIX), SURFACE (meter taps, SEL DBL CLICK, SOF and scribble options, CH
     AUTOSELECT, FADER SPEED, paging, user layer link, alternative SOF; the **SECTIONS**
     key in the FADERS header opens Sidecar's FADER SECTIONS: section widths, SHIFT STEP
@@ -461,7 +466,8 @@ like the finish. The COMPACT is black, so it always shows the black finish. It f
     toolbar with the talk keys, PHONES / SPEAKERS / PH+SPK, DIM, MUTE, MONO, LR SWAP;
     TALK A / B: switch mode, AUTO DIM, USE SEND LEVELS and the bus, matrix and main
     destinations, the talk side dim with TALKBACK DISABLED while no talkback channel is
-    set (touch it to pick one); PHONES and SPEAKERS, each its own: SOURCE, SRC LEVEL,
+    set (touch it to pick one); PHONES and SPEAKERS, each its own: SOURCE (OFF: only
+    the solo bus and DIRECT IN; MAIN, MATRIX, BUS or AUX), SRC LEVEL,
     SRC MIX, DIM, PFL DIM, BAND SOLO, DIRECT IN (any channel, bus, main or matrix, at
     its own level), the EQ (MONITORS EQ: 8 bands, PAN, WIDTH, and an RTA of the path,
     PRE or POST its EQ as EQ/RTA SETTINGS' RTA SOURCE says), the DIST slider (0.1-100 m,
@@ -476,7 +482,7 @@ like the finish. The COMPACT is black, so it always shows the black finish. It f
     SETUP > GENERAL > TAP TEMPO FLASH says: OFF, 8X for eight beats after the time
     changes, or ON), **OVERVIEW PAGE** (the OVERVIEW screen of a section on a layer
     key or bank) and the whole OTHER list: TALKBACK A / B (as the TALK keys), GLOBAL
-    MAIN/ALT (the global input switch), DAW LAYER, MONITOR PHONES / SPEAKERS / PH+SPK
+    MAIN/ALT (the global input switch: the GLOBAL channels), DAW LAYER, MONITOR PHONES / SPEAKERS / PH+SPK
     (the monitoring path), MONITOR DIM / MONO / SWAP / MUTE, FADER -oo / -10 dB /
     0 dB, AUTOMIX X / Y, CHANNEL PREV / NEXT, CH / BUS / MAIN / MTX SOLO TAP (PFL /
     AFL, lit for AFL), CH / BUS / MAIN / MTX / DCA METER TAP (PRE / POST, lit for
@@ -614,8 +620,9 @@ a WING with a WING-LIVE card, and edits them in a DAW-style editor.
   - **RECORD ALL CHANNELS**: a track per input channel, named and coloured like it,
     recording its input port, armed, each on its own playback channels;
   - **VIRTUAL SOUNDCHECK**: each channel's ALT input becomes its track's playback
-    channel and INPUT SELECT switches to GLOBAL ALT, so the band's recording plays
-    through the console; press again to go back to the live inputs;
+    channel and those channels go to ALT and into GLOBAL INPUT SELECT ENABLE, so the
+    band's recording plays through the console and AUTO INPUT SELECT switches them;
+    press again to go back to the live inputs (MAIN);
   - **EDIT** (status bar, header) opens the editor. The knobs move the position and
     the range (START, END).
   - **MODE** (next to the transport) steps PLAY, A->B and LOOP. PLAY plays on. A->B
@@ -623,8 +630,10 @@ a WING with a WING-LIVE card, and edits them in a DAW-style editor.
     again. The mode is kept in the project.
   - **SETTINGS** (status bar): **SHOW METERS** shows or hides the meters. **AUTO
     INPUT SELECT** with **[STOP] / [PLAY] / [RECORD] INPUT** (KEEP, MAIN or ALT)
-    switches the global MAIN / ALT when the recorder stops, plays or records. The
-    channels follow it while INPUT SELECT is GLOBAL (VIRTUAL SOUNDCHECK sets it).
+    switches the channels in GLOBAL INPUT SELECT ENABLE that are routed to or from
+    the recorder (a playback channel as MAIN or ALT input, or a track recording the
+    channel or its input) to MAIN or ALT when the recorder stops, plays or records
+    (VIRTUAL SOUNDCHECK sets them up).
     For a virtual soundcheck: STOP and RECORD on MAIN, PLAY on ALT.
   - **Record format** (the header's format key, or FILE > Record format in the
     editor): WAV 32-bit float (the default), WAV / AIFF / FLAC 24-bit, or MP3 320 /
@@ -929,9 +938,9 @@ and open-source projects (see below), and it is **experimental**.
   differently ends up with A n's patch after PC -> MIXER.
 - **What maps:** every parameter of the WING 3.1 tree but one answers (79,325 of
   79,326, counting every processing model's parameters and every custom control
-  mode's function nodes). 73,664 of them (92.9 %) drive the engine or the show, 85
-  are Sidecar's SETUP settings, and the 5,576 Sidecar has no equivalent for answer what a factory-initialized WING answers (see below). Driving the engine: channels, aux, buses, mains
-  and matrices (name, colour, icon, input and ALT patch, trim, filters, gate, EQ and
+  mode's function nodes). 73,712 of them (92.9 %) drive the engine or the show, 85
+  are Sidecar's SETUP settings, and the 5,528 Sidecar has no equivalent for answer what a factory-initialized WING answers (see below). Driving the engine: channels, aux, buses, mains
+  and matrices (name, colour, icon, input and ALT patch, INPUT SELECT with `srcauto`, trim, filters, gate, EQ and
   dynamics models with all their parameters, inserts, fader, mute, pan, width, sends,
   main sends, solo, TAP WIDTH and TAP EQ, every bus's sends to the other buses, the
   matrices' `dir/in`), DCAs (with their SOLO BUS), mute groups, the FX rack, output

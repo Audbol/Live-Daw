@@ -176,18 +176,21 @@ public:
 
     //==============================================================================
     // INPUT SELECT (WING SETUP > AUDIO): input and aux channels switch between
-    // their MAIN and ALT inputs (Strip::setAltInput), individually
-    // (Strip::setAltSelected) or all at once with the global MAIN / ALT switch.
-    // Saved in shows and recalled with ROUTING.
+    // their MAIN and ALT inputs (Strip::setAltInput) with their own switch
+    // (Strip::switchInput); the global MAIN / ALT switch switches the channels
+    // in GLOBAL INPUT SELECT ENABLE (Strip::setSrcAuto) at once. Saved in shows
+    // and recalled with ROUTING.
 
-    /** True: every input strip follows globalAlt; false: each its own switch. */
-    std::atomic<bool>& inputSelectGlobal;
-    /** The global MAIN / ALT switch (true = ALT). */
+    /** GLOBAL INPUT SELECT OVERRIDE (on after INITIALIZE): a GLOBAL channel's
+        own MAIN / ALT key still works. */
+    std::atomic<bool>& inputSelectOverride;
+    /** The global MAIN / ALT switch (true = ALT): set it with setGlobalAlt(). */
     std::atomic<bool>& globalAlt;
-    bool isInputSelectGlobal() const noexcept { return inputSelectGlobal.load(); }
-    void setInputSelectGlobal (bool global) noexcept { inputSelectGlobal = global; }
+    bool isInputSelectOverride() const noexcept { return inputSelectOverride.load(); }
+    void setInputSelectOverride (bool on) noexcept { inputSelectOverride = on; }
     bool isGlobalAlt() const noexcept { return globalAlt.load(); }
-    void setGlobalAlt (bool alt) noexcept { globalAlt = alt; }
+    /** The global MAIN / ALT switch: the channels in GLOBAL INPUT SELECT ENABLE go to MAIN or ALT. */
+    void setGlobalAlt (bool alt) noexcept { ld::ld_engine_set_global_alt (engine, alt); }
     /** True if `strip` listens to its ALT input now (Strip::isUsingAltInput). */
     bool usesAltInput (const Strip& strip) const noexcept { return strip.isUsingAltInput(); }
 

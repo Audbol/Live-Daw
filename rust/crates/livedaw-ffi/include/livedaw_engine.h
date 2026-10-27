@@ -28,7 +28,7 @@ static_assert (sizeof (std::atomic<float>) == 4 && std::atomic<float>::is_always
 static_assert (sizeof (std::atomic<bool>) == 1 && std::atomic<bool>::is_always_lock_free);
 static_assert (sizeof (std::atomic<int32_t>) == 4 && std::atomic<int32_t>::is_always_lock_free);
 
-constexpr int kAbiVersion = 21;
+constexpr int kAbiVersion = 22;
 constexpr int kMaxBuses = 16384;
 constexpr int kNumMains = 4;
 constexpr int kNumMatrices = 8;
@@ -262,7 +262,10 @@ struct StripParams
     // ALT input (WING INPUT SELECT; input and aux channels): used instead of
     // inputLeft/Right while ALT is selected (-1 = none; right used when stereo).
     std::atomic<int32_t> altInputLeft, altInputRight;
-    std::atomic<bool> altSelected; // the strip's MAIN / ALT switch (unless INPUT SELECT is global)
+    std::atomic<bool> altSelected; // the strip's MAIN / ALT switch (/ch/n/in/set/altsrc)
+    // ABI 22: INPUT SELECT GLOBAL, in GLOBAL INPUT SELECT ENABLE (/ch/n/in/set/srcauto):
+    // the global MAIN / ALT switch (ld_engine_set_global_alt) and AUTO INPUT SELECT switch it.
+    std::atomic<bool> srcAuto;
 
     // ABI 7, input channels: the signal TAP-mode sends take.
     std::atomic<float> tapWidth; // TAP WIDTH, -150..150 % (stereo channels)
@@ -545,9 +548,10 @@ struct EngineControls
     std::atomic<bool> automixEnable[2]; // X ENABLE, Y ENABLE
     std::atomic<float> monitorDimDb;    // DIM amount (attenuation in dB, default 20)
     std::atomic<int32_t> mainLink;      // MainLinkMode
-    // INPUT SELECT: global = every input strip follows globalAlt, else each
-    // strip's altSelected. A strip uses ALT only if it has an ALT source.
-    std::atomic<bool> inputSelectGlobal;
+    // INPUT SELECT. GLOBAL INPUT SELECT OVERRIDE (/io/autoaltovr): a GLOBAL
+    // strip's own MAIN / ALT switch still works. globalAlt: the global MAIN /
+    // ALT switch (/io/altsw); set it with ld_engine_set_global_alt.
+    std::atomic<bool> inputSelectOverride;
     std::atomic<bool> globalAlt;
 
     // ABI 7: console level
@@ -629,7 +633,7 @@ struct LayoutInfo
         offMetersTrimPeak, offMetersPflPeak, offControlsBusSoloAfl, offControlsAutomixEnable, offControlsDimDb,
         offControlsMainLink,
         // ABI 6
-        offAltInputLeft, offAltSelected, offControlsInputSelectGlobal, offControlsGlobalAlt, recClip,
+        offAltInputLeft, offAltSelected, offControlsInputSelectOverride, offControlsGlobalAlt, recClip,
         recPlaybackTrack, recRecordTrack, recTake,
         // ABI 7
         offTapWidth, offTapEq, tapEq, analysis, offAnalysisEq, offAnalysisFilterTap,
@@ -651,7 +655,9 @@ struct LayoutInfo
         // ABI 20 (FaderRefC.flags, kFaderSelSend)
         faderRef,
         // ABI 21 (FX SEND outputs)
-        offFxSendLeft;
+        offFxSendLeft,
+        // ABI 22 (GLOBAL INPUT SELECT ENABLE)
+        offSrcAuto;
 };
 
 /** A console model's surface and local I/O (ld_console_model_info). Models:
@@ -1460,6 +1466,8 @@ extern "C"
     bool ld_strip_is_soloed (const Strip*);
     /** The MUTE key, MUTEGROUP/SIP OVERRIDE aware. */
     void ld_engine_press_mute (const Engine*, const Strip*);
+    /** ABI 22: the global MAIN / ALT switch; switches the channels in GLOBAL INPUT SELECT ENABLE. */
+    void ld_engine_set_global_alt (const Engine*, bool alt);
     /** Monitor paths (bit 0 = SPEAKERS, bit 1 = PHONES) DCA `dca` controls (named MON A: PHONES, MON B: SPEAKERS, MON LVL). */
     uint32_t ld_engine_dca_monitor_paths (const Engine*, int32_t dca);
 
@@ -1550,7 +1558,7 @@ inline const char* verifyLayout()
         { info.offControlsMainLink, offsetof (EngineControls, mainLink), "EngineControls.mainLink" },
         { info.offAltInputLeft, offsetof (StripParams, altInputLeft), "StripParams.altInputLeft" },
         { info.offAltSelected, offsetof (StripParams, altSelected), "StripParams.altSelected" },
-        { info.offControlsInputSelectGlobal, offsetof (EngineControls, inputSelectGlobal), "EngineControls.inputSelectGlobal" },
+        { info.offControlsInputSelectOverride, offsetof (EngineControls, inputSelectOverride), "EngineControls.inputSelectOverride" },
         { info.offControlsGlobalAlt, offsetof (EngineControls, globalAlt), "EngineControls.globalAlt" },
         { info.recClip, sizeof (RecClipC), "RecClipC size" },
         { info.recPlaybackTrack, sizeof (RecPlaybackTrackC), "RecPlaybackTrackC size" },
@@ -1592,6 +1600,7 @@ inline const char* verifyLayout()
         { info.userPatch, sizeof (UserPatchParams), "UserPatchParams size" },
         { info.faderRef, sizeof (FaderRefC), "FaderRefC size" },
         { info.offFxSendLeft, offsetof (FxParams, sendLeft), "FxParams.sendLeft" },
+        { info.offSrcAuto, offsetof (StripParams, srcAuto), "StripParams.srcAuto" },
     };
 
     if (info.abiVersion != kAbiVersion)

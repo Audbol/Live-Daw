@@ -45,11 +45,16 @@ private:
     void recordAllChannels();
     void virtualSoundcheck();
     bool canVirtualSoundcheck() const;
-    /** The channels listen to the recorder (global INPUT SELECT on ALT). */
+    /** The channels VIRTUAL SOUNDCHECK switched still listen to the recorder (ALT). */
     bool isVirtualSoundcheckOn() const;
-    /** INPUT SELECT as it was before VIRTUAL SOUNDCHECK switched it to GLOBAL
-        ALT (GLOBAL INPUT SELECT OVERRIDE, global ALT); put back when it ends. */
-    std::optional<std::pair<bool, bool>> inputSelectBeforeSoundcheck;
+    /** The channels VIRTUAL SOUNDCHECK switched, with their INPUT SELECT before
+        (GLOBAL, ALT); put back when it ends. */
+    struct SoundcheckChannel
+    {
+        int number = 0;
+        bool srcAuto = false;
+    };
+    std::vector<SoundcheckChannel> soundcheckChannels;
     void locateFromTimeline (int x);
     daw::int64 timelineLength() const;
     int tracksPerPage() const;

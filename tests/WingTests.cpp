@@ -258,7 +258,8 @@ public:
             auto dir = tempDir ("settings");
             MixerEngine engine (0);
             juce::PropertiesFile settings (dir.getChildFile ("test.settings"), juce::PropertiesFile::Options());
-            settings.setValue ("setup.meterTapPre.1", true); // BUS METERS: PRE
+            settings.setValue ("setup.meterPageTapPre.1", true); // METERS > SETTINGS: BUS PRE
+            settings.setValue ("setup.meterTapPre.1", false); // the surface's stay POST
             auto& wing = engine.getWing();
             juce::StringArray changed;
             wing.setHostSettings (&settings, [&changed] (const juce::StringArray& keys) { changed.addArray (keys); });
@@ -271,6 +272,7 @@ public:
             };
             const auto meters = sysex (3, "/cfg.mtr.mtrpage");
             expect (meters.contains ("bus=PRE") && meters.contains ("main=POST"), meters);
+            expect (sysex (3, "/cfg.mtr.mtrsfc").contains ("bus=POST"), "the surface's meters have their own taps");
             expect (sysex (2, "/cfg.mtr.mtrsfc.main=PRE").isEmpty());
             expect (sysex (2, "/cfg.mtr.mainmtr=MAIN.2").isEmpty());
             expect (sysex (2, "/$ctl.daw.emul=HUI").isEmpty());

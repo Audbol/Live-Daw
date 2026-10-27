@@ -492,8 +492,12 @@ pub struct StripParams {
     /// input or a playback channel (`PLAYBACK_SOURCE_BASE + n`).
     pub alt_input_left: AtomicI32,
     pub alt_input_right: AtomicI32,
-    /// The strip's own MAIN / ALT switch (used unless INPUT SELECT is global).
+    /// The strip's MAIN / ALT switch (WING `/ch/n/in/set/altsrc`).
     pub alt_selected: AtomicBool,
+    /// ABI 22: INPUT SELECT GLOBAL, the strip is in SETUP > AUDIO's GLOBAL
+    /// INPUT SELECT ENABLE grid (WING `/ch/n/in/set/srcauto`): the global
+    /// MAIN / ALT switch and AUTO INPUT SELECT switch it.
+    pub src_auto: AtomicBool,
 
     // ABI 7: the TAP-mode send signal (WING `/ch/n/tapwid`, `/ch/n/peq`).
     /// TAP WIDTH (input channels, -150..150 %): the stereo width of the
@@ -686,7 +690,7 @@ mod colour_tests {
             (livedaw_recorder::USB_PLAYER_SOURCE_BASE, livedaw_recorder::USB_PLAYER_SOURCE_BASE + 1)
         );
         let c = EngineControls::default();
-        assert!(c.mute_override.load(Relaxed) && c.input_select_global.load(Relaxed));
+        assert!(c.mute_override.load(Relaxed) && c.input_select_override.load(Relaxed));
         let d = DcaParams::default();
         assert_eq!(
             (d.colour.load(Relaxed), d.led.load(Relaxed), d.fader_db.load()),
@@ -790,6 +794,7 @@ impl StripParams {
             alt_input_left: AtomicI32::new(-1),
             alt_input_right: AtomicI32::new(-1),
             alt_selected: AtomicBool::new(false),
+            src_auto: AtomicBool::new(false),
             tap_width: AtomicF32::new(100.0),
             tap_eq: TapEqParams::default(),
             cust_link: AtomicBool::new(kind.is_input()),
@@ -1115,10 +1120,13 @@ pub struct EngineControls {
     pub monitor_dim_db: AtomicF32,
     /// Index into [`MAIN_LINK_MODES`].
     pub main_link: AtomicI32,
-    /// INPUT SELECT: true = every input strip follows `global_alt` (the
-    /// SETUP > AUDIO MAIN / ALT switch), false = each strip's `alt_selected`.
-    pub input_select_global: AtomicBool,
-    /// The global MAIN / ALT switch (true = ALT).
+    /// GLOBAL INPUT SELECT OVERRIDE (SETUP > AUDIO > PREFERENCES, WING
+    /// `/io/autoaltovr`): the MAIN / ALT switch of a strip in GLOBAL INPUT
+    /// SELECT ENABLE (`StripParams::src_auto`) can still be used by hand.
+    pub input_select_override: AtomicBool,
+    /// The global MAIN / ALT switch (true = ALT, WING `/io/altsw`): set it with
+    /// `Engine::set_global_alt`, which switches the strips in GLOBAL INPUT
+    /// SELECT ENABLE.
     pub global_alt: AtomicBool,
 
     // ---- console level, ABI 7: solo modes, talkback, monitor paths -----------
@@ -1181,7 +1189,7 @@ impl Default for EngineControls {
             monitor_dim_db: AtomicF32::new(DEFAULT_DIM_DB),
             main_link: AtomicI32::new(0),
             // A WING after INITIALIZE: `/io/autoaltovr` and `/$ctl/cfg/muteovr` on.
-            input_select_global: AtomicBool::new(true),
+            input_select_override: AtomicBool::new(true),
             global_alt: AtomicBool::new(false),
             solo_mode: AtomicI32::new(solo_mode::LIVE),
             solo_bus: AtomicI32::new(0),
@@ -1229,7 +1237,7 @@ impl EngineControls {
             enable.store(true, Relaxed);
         }
         self.main_link.store(0, Relaxed);
-        self.input_select_global.store(true, Relaxed);
+        self.input_select_override.store(true, Relaxed);
         self.global_alt.store(false, Relaxed);
         self.solo_mode.store(solo_mode::LIVE, Relaxed);
         self.solo_bus.store(0, Relaxed);

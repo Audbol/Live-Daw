@@ -105,12 +105,12 @@ public:
 
     void runTest() override
     {
-        beginTest ("The C ABI is version 21 and both sides agree on the layout");
+        beginTest ("The C ABI is version 22 and both sides agree on the layout");
         {
-            expectEquals (ld::kAbiVersion, 21);
+            expectEquals (ld::kAbiVersion, 22);
             ld::LayoutInfo info {};
             ld::ld_layout_info (&info);
-            expectEquals ((int) info.abiVersion, 21);
+            expectEquals ((int) info.abiVersion, 22);
             const char* mismatch = ld::verifyLayout();
             expect (mismatch == nullptr, mismatch != nullptr ? juce::String (mismatch) : juce::String());
         }
@@ -219,7 +219,6 @@ public:
 
             MixerEngine engine (0);
             test::setChannels (engine, 2);
-            engine.setInputSelectGlobal (false); // per channel (a new console's is GLOBAL)
             Driver d (engine, 2, 2);
             auto& rec = engine.getRecorder();
             auto& ch2 = *engine.getChannels()[1];
@@ -272,13 +271,24 @@ public:
                 }
             }
 
-            // INPUT SELECT global: the global switch decides.
-            engine.setInputSelectGlobal (true);
-            expect (! ch2.isUsingAltInput());
+            // INPUT SELECT: the global switch switches the GLOBAL channels only.
+            engine.setGlobalAlt (false);
+            expect (ch2.isUsingAltInput(), "INDIVIDUAL: the global switch leaves CH 2 alone");
+            ch2.setSrcAuto (true);
+            engine.getChannels()[0]->setSrcAuto (true);
+            engine.setGlobalAlt (false);
+            expect (! ch2.isUsingAltInput() && engine.isGlobalAlt() == false);
             engine.setGlobalAlt (true);
             expect (ch2.isUsingAltInput());
             expect (! engine.getChannels()[0]->isUsingAltInput(), "CH 1 has no ALT source");
-            engine.setInputSelectGlobal (false);
+            // GLOBAL INPUT SELECT OVERRIDE: a GLOBAL channel's own key works only with it.
+            expect (engine.isInputSelectOverride() && ch2.canSwitchInput() && ch2.switchInput (false));
+            engine.setInputSelectOverride (false);
+            expect (! ch2.canSwitchInput() && ! ch2.switchInput (true) && ! ch2.isAltSelected());
+            ch2.setSrcAuto (false);
+            expect (ch2.switchInput (true) && ch2.isUsingAltInput());
+            engine.setInputSelectOverride (true);
+            expect (! engine.getBuses()[0]->canSwitchInput() && ! engine.getBuses()[0]->isSrcAuto());
             ch2.setAltInput (-1);
             expect (! ch2.isUsingAltInput());
         }

@@ -49,7 +49,7 @@ use std::sync::Arc;
 // ABI 21: FxParams::send_left / send_right (the EXT device's outboard insert:
 // FX SEND outputs), ld_engine_set_io_latency, source and output recall safes
 // (ld_engine_io_safe, ld_engine_set_io_safe).
-pub const LD_ABI_VERSION: i32 = 21;
+pub const LD_ABI_VERSION: i32 = 22;
 
 fn guard<T>(default: T, f: impl FnOnce() -> T) -> T {
     catch_unwind(AssertUnwindSafe(f)).unwrap_or(default)
@@ -121,7 +121,7 @@ pub struct LdLayoutInfo {
     // ABI 6
     pub off_alt_input_left: i32,
     pub off_alt_selected: i32,
-    pub off_controls_input_select_global: i32,
+    pub off_controls_input_select_override: i32,
     pub off_controls_global_alt: i32,
     pub rec_clip: i32,
     pub rec_playback_track: i32,
@@ -173,6 +173,8 @@ pub struct LdLayoutInfo {
     pub fader_ref: i32,
     // ABI 21: an FX slot's FX SEND outputs
     pub off_fx_send_left: i32,
+    // ABI 22: GLOBAL INPUT SELECT ENABLE
+    pub off_src_auto: i32,
 }
 
 #[no_mangle]
@@ -224,7 +226,7 @@ pub unsafe extern "C" fn ld_layout_info(out: *mut LdLayoutInfo) {
         off_controls_main_link: offset_of!(EngineControls, main_link) as i32,
         off_alt_input_left: offset_of!(StripParams, alt_input_left) as i32,
         off_alt_selected: offset_of!(StripParams, alt_selected) as i32,
-        off_controls_input_select_global: offset_of!(EngineControls, input_select_global) as i32,
+        off_controls_input_select_override: offset_of!(EngineControls, input_select_override) as i32,
         off_controls_global_alt: offset_of!(EngineControls, global_alt) as i32,
         rec_clip: size_of::<recorder::LdRecClip>() as i32,
         rec_playback_track: size_of::<recorder::LdRecPlaybackTrack>() as i32,
@@ -266,6 +268,7 @@ pub unsafe extern "C" fn ld_layout_info(out: *mut LdLayoutInfo) {
         user_patch: size_of::<UserPatchParams>() as i32,
         fader_ref: size_of::<session::LdFaderRef>() as i32,
         off_fx_send_left: offset_of!(FxParams, send_left) as i32,
+        off_src_auto: offset_of!(StripParams, src_auto) as i32,
     };
 }
 

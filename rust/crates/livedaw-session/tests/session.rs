@@ -1032,18 +1032,20 @@ fn alt_inputs_and_input_select_are_saved_and_recalled_with_routing() {
     a.params.alt_input_left.store(0x10000 + 5, Relaxed); // playback channel 6
     a.params.alt_input_right.store(0x10000 + 6, Relaxed);
     a.params.alt_selected.store(true, Relaxed);
+    a.params.src_auto.store(true, Relaxed);
     aux.params.alt_input_left.store(12, Relaxed);
-    c.input_select_global.store(true, Relaxed);
+    c.input_select_override.store(false, Relaxed);
     c.global_alt.store(true, Relaxed);
 
     // Show files keep them.
     let (e2, _) = round_trip(&engine, &Show::new());
     let b = ch(&e2, 0);
     assert_eq!((b.params.alt_input_left.load(Relaxed), b.params.alt_input_right.load(Relaxed)), (0x10005, 0x10006));
-    assert!(b.params.alt_selected.load(Relaxed));
+    assert!(b.params.alt_selected.load(Relaxed) && b.params.src_auto.load(Relaxed));
+    assert!(!ch(&e2, 1).params.src_auto.load(Relaxed));
     assert_eq!(e2.strip_at(StripKind::Aux, 3).unwrap().params.alt_input_left.load(Relaxed), 12);
     assert_eq!(ch(&e2, 1).params.alt_input_left.load(Relaxed), -1);
-    assert!(e2.controls.input_select_global.load(Relaxed) && e2.controls.global_alt.load(Relaxed));
+    assert!(!e2.controls.input_select_override.load(Relaxed) && e2.controls.global_alt.load(Relaxed));
 
     // Scenes recall them with ROUTING (CONN), not with other sections.
     let mut show = Show::new();
@@ -1051,34 +1053,102 @@ fn alt_inputs_and_input_select_are_saved_and_recalled_with_routing() {
     show.scene_mut(0).unwrap().scope = section::ROUTING;
     a.params.alt_input_left.store(3, Relaxed);
     a.params.alt_selected.store(false, Relaxed);
-    c.input_select_global.store(false, Relaxed);
+    a.params.src_auto.store(false, Relaxed);
+    c.input_select_override.store(true, Relaxed);
     c.global_alt.store(false, Relaxed);
     show.recall_scene(&engine, &mut np, 0);
     assert_eq!(a.params.alt_input_left.load(Relaxed), 0x10005);
-    assert!(a.params.alt_selected.load(Relaxed));
-    assert!(c.input_select_global.load(Relaxed) && c.global_alt.load(Relaxed));
+    assert!(a.params.alt_selected.load(Relaxed) && a.params.src_auto.load(Relaxed));
+    assert!(c.global_alt.load(Relaxed));
+    assert!(c.input_select_override.load(Relaxed), "GLOBAL INPUT SELECT OVERRIDE is a preference: scenes leave it");
     a.params.alt_selected.store(false, Relaxed);
+    a.params.src_auto.store(false, Relaxed);
     c.global_alt.store(false, Relaxed);
     show.scene_mut(0).unwrap().scope = section::FADER | section::PREAMP;
     show.recall_scene(&engine, &mut np, 0);
-    assert!(!a.params.alt_selected.load(Relaxed) && !c.global_alt.load(Relaxed));
+    assert!(!a.params.alt_selected.load(Relaxed) && !a.params.src_auto.load(Relaxed) && !c.global_alt.load(Relaxed));
 
     // Shows from before ALT inputs load as before.
     let mut text = Show::new().to_xml(&engine, &mut np).to_document();
     let attr = |name: &str, v: &str| format!(" {name}=\"{v}\"");
-    for (name, v) in [("altL", "65541"), ("altR", "65542"), ("altSel", "0"), ("altL", "-1"), ("altR", "-1"), ("altL", "12")] {
+    for (name, v) in [("altL", "-1"), ("altR", "-1"), ("altL", "65541"), ("altL", "12"), ("altR", "65542"), ("altSel", "0")] {
         text = text.replace(&attr(name, v), "");
     }
+    text = text.replace(&attr("srcAuto", "0"), "");
     let start = text.find("<InputSelect").unwrap();
     let end = start + text[start..].find("/>").unwrap() + 2;
     text.replace_range(start..end, "");
-    assert!(!text.contains(" alt"), "every ALT attribute removed");
+    assert!(!text.contains(" alt") && !text.contains("srcAuto"), "every ALT attribute removed");
     let e3 = Engine::new(0);
     let mut loaded = Show::new();
     loaded.load_from_text(&e3, &mut np, &text, true).unwrap();
     assert_eq!(ch(&e3, 0).params.alt_input_left.load(Relaxed), -1);
-    assert!(!ch(&e3, 0).params.alt_selected.load(Relaxed));
-    assert!(!e3.controls.input_select_global.load(Relaxed) && !e3.controls.global_alt.load(Relaxed));
+    assert!(!ch(&e3, 0).params.alt_selected.load(Relaxed) && !ch(&e3, 0).params.src_auto.load(Relaxed));
+    assert!(e3.controls.input_select_override.load(Relaxed) && !e3.controls.global_alt.load(Relaxed));
+}
+
+/// Replaces every `<InputSelect .../>` of `xml` with `with`.
+fn replace_input_select(xml: &str, with: &str) -> String {
+    let mut xml = xml.replace(" srcAuto=\"0\"", "");
+    let mut at = 0;
+    while let Some(i) = xml[at..].find("<InputSelect") {
+        let start = at + i;
+        let end = start + xml[start..].find("/>").unwrap() + 2;
+        xml.replace_range(start..end, with);
+        at = start + with.len();
+    }
+    xml
+}
+
+#[test]
+fn input_select_from_before_global_input_select_enable_sounds_as_then() {
+    // Sidecar 0.1.5 saved one console-wide INPUT SELECT: `global` = every
+    // input and aux channel follows the global MAIN / ALT switch.
+    let engine = Engine::new(0);
+    let mut np = NoPlugins;
+    set_channels(&engine, 2);
+    ch(&engine, 1).params.alt_selected.store(true, Relaxed);
+    let text = Show::new().to_xml(&engine, &mut np).to_document();
+    let old = |global: &str, alt: &str| {
+        let e = Engine::new(0);
+        let text = replace_input_select(&text, &format!("<InputSelect global=\"{global}\" alt=\"{alt}\"/>"));
+        Show::new().load_from_text(&e, &mut NoPlugins, &text, true).unwrap();
+        e
+    };
+    // GLOBAL on ALT: every channel GLOBAL and on ALT, so the switch moves them all.
+    let e = old("1", "1");
+    for kind in [StripKind::Channel, StripKind::Aux] {
+        for s in e.strips(kind) {
+            assert!(s.params.src_auto.load(Relaxed) && s.params.alt_selected.load(Relaxed));
+        }
+    }
+    assert!(e.controls.global_alt.load(Relaxed) && e.controls.input_select_override.load(Relaxed));
+    e.set_global_alt(false);
+    assert!(e.strips(StripKind::Aux).iter().all(|s| !s.params.alt_selected.load(Relaxed)));
+    // Per strip: every channel INDIVIDUAL with its own switch.
+    let e = old("0", "1");
+    assert!(!ch(&e, 0).params.alt_selected.load(Relaxed) && ch(&e, 1).params.alt_selected.load(Relaxed));
+    assert!(e.strips(StripKind::Channel).iter().all(|s| !s.params.src_auto.load(Relaxed)));
+    e.set_global_alt(false);
+    assert!(ch(&e, 1).params.alt_selected.load(Relaxed), "an INDIVIDUAL channel keeps its switch");
+
+    // A scene saved then recalls the same way (with ROUTING).
+    let mut show = Show::new();
+    show.add_scene(&engine, &mut np, "A", -1);
+    let xml = replace_input_select(&show.to_xml(&engine, &mut np).to_document(), "<InputSelect global=\"1\" alt=\"0\"/>");
+    let mut loaded = Show::new();
+    let e4 = Engine::new(0);
+    loaded.load_from_text(&e4, &mut np, &xml, true).unwrap();
+    for s in e4.strips(StripKind::Channel) {
+        s.params.src_auto.store(false, Relaxed);
+        s.params.alt_selected.store(true, Relaxed);
+    }
+    loaded.scene_mut(0).unwrap().scope = section::ROUTING;
+    loaded.recall_scene(&e4, &mut np, 0);
+    assert!(e4
+        .strips(StripKind::Channel)
+        .iter()
+        .all(|s| s.params.src_auto.load(Relaxed) && !s.params.alt_selected.load(Relaxed)));
 }
 
 // ---- scopes, global safes, partial load / update, restore, snippet REC -----------------

@@ -3,6 +3,7 @@
 #include "daw/Session.h"
 #include "daw/TimeGrid.h"
 #include "engine/MixerEngine.h"
+#include "TestHelpers.h"
 
 #include <juce_core/juce_core.h>
 
@@ -578,9 +579,12 @@ private:
                 auto& strip = *engine.getChannels()[1];
                 strip.setAltInput (Recorder::playbackSource (routes[0].playChannel));
                 strip.params.inputLeft = -1;
-                engine.setInputSelectGlobal (true);
+                strip.setSrcAuto (true);
                 engine.setGlobalAlt (true);
                 expect (strip.isUsingAltInput());
+                expect (session.isRoutedToRecorder (StripKind::Channel, 2, -1, strip.getAltInputLeft()));
+                expect (! session.isRoutedToRecorder (StripKind::Channel, 1, 5, -1));
+                expect (session.isRoutedToRecorder (StripKind::Channel, 1, 0, -1), "a track records port 0");
 
                 // Play the take from the start: the channel's input meter shows it.
                 p.setTrackProperty (t, ids::arm, false, false);
@@ -918,6 +922,26 @@ private:
             expect (Session::autoInputFor (&settings, TM::Stop) == std::optional<bool> (false));
             expect (! Session::autoInputFor (&settings, TM::Record).has_value(), "KEEP");
             expect (! Session::autoInputFor (nullptr, TM::Play).has_value());
+
+            // It switches the GLOBAL channels routed to or from the recorder only:
+            // CH 1 plays a track on ALT (GLOBAL), CH 2 too but INDIVIDUAL, CH 3
+            // is GLOBAL but has nothing to do with the recorder.
+            test::setChannels (engine, 3);
+            auto& chans = engine.getChannels();
+            for (int i = 0; i < 3; ++i)
+            {
+                chans[(size_t) i]->params.inputLeft = 10 + i;
+                chans[(size_t) i]->setAltInput (i < 2 ? Recorder::playbackSource (i) : 20);
+                chans[(size_t) i]->setSrcAuto (i != 1);
+            }
+            expectEquals (session.applyAutoInput (engine, TM::Play), 1);
+            expect (chans[0]->isUsingAltInput() && ! chans[1]->isAltSelected() && ! chans[2]->isAltSelected());
+            expectEquals (session.applyAutoInput (engine, TM::Record), 0, "KEEP");
+            expectEquals (session.applyAutoInput (engine, TM::Stop), 1);
+            expect (! chans[0]->isAltSelected());
+            settings.setValue (Session::autoInputKey, juce::var (0));
+            chans[0]->setAltSelected (true);
+            expectEquals (session.applyAutoInput (engine, TM::Stop), 0, "AUTO INPUT SELECT OFF");
         }
     }
 };

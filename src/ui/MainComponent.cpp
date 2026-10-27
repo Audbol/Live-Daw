@@ -197,16 +197,16 @@ MainComponent::MainComponent (juce::AudioDeviceManager& dm, MixerEngine& e, Plug
             log.info (text);
     };
     // AUTO INPUT SELECT (manual 8.1 p. 85-86): the recorder's stop, play and
-    // record status switch the global MAIN / ALT (the channels following it:
-    // INPUT SELECT GLOBAL, as VIRTUAL SOUNDCHECK sets it).
+    // record status switch the channels in GLOBAL INPUT SELECT ENABLE that
+    // are routed to or from the recorder (as VIRTUAL SOUNDCHECK sets them up)
+    // to MAIN or ALT.
     recording->onTransportModeChanged = [this] (daw::Session::TransportMode mode)
     {
-        if (const auto alt = daw::Session::autoInputFor (&settings, mode); alt && *alt != engine.isGlobalAlt())
+        if (const int switched = recording->applyAutoInput (engine, mode); switched > 0)
         {
-            engine.setGlobalAlt (*alt);
             static const char* const names[] = { "STOP", "PLAY", "RECORD" };
-            log.info (juce::String ("AUTO INPUT SELECT (") + names[(int) mode] + "): the channels listen to their " + (*alt ? "ALT" : "MAIN") + " inputs"
-                      + (engine.isInputSelectGlobal() ? juce::String() : juce::String (" (INPUT SELECT is not GLOBAL: no channel follows)")));
+            log.info (juce::String ("AUTO INPUT SELECT (") + names[(int) mode] + "): " + juce::String (switched) + " channels listen to their "
+                      + (*daw::Session::autoInputFor (&settings, mode) ? "ALT" : "MAIN") + " inputs");
         }
     };
     ctx.recording = recording.get();

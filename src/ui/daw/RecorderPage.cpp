@@ -958,7 +958,13 @@ bool RecorderPage::canVirtualSoundcheck() const
 
 bool RecorderPage::isVirtualSoundcheckOn() const
 {
-    return ctx.engine.isInputSelectGlobal() && ctx.engine.isGlobalAlt();
+    if (soundcheckChannels.empty())
+        return false;
+    for (auto& c : soundcheckChannels)
+        for (auto& s : ctx.engine.getChannels())
+            if (s->getNumber() == c.number && ! s->isUsingAltInput())
+                return false;
+    return true;
 }
 
 void RecorderPage::virtualSoundcheck()
@@ -966,11 +972,15 @@ void RecorderPage::virtualSoundcheck()
     auto& engine = ctx.engine;
     if (isVirtualSoundcheckOn())
     {
-        // Back to the live inputs, with INPUT SELECT as it was before.
-        const auto [global, alt] = inputSelectBeforeSoundcheck.value_or (std::pair { engine.isInputSelectGlobal(), false });
-        inputSelectBeforeSoundcheck.reset();
-        engine.setInputSelectGlobal (global);
-        engine.setGlobalAlt (alt);
+        // Back to the live inputs (MAIN), each channel GLOBAL or INDIVIDUAL as before.
+        for (auto& c : soundcheckChannels)
+            for (auto& s : engine.getChannels())
+                if (s->getNumber() == c.number)
+                {
+                    s->setSrcAuto (c.srcAuto);
+                    s->setAltSelected (false); // the ALT input is now the playback channel
+                }
+        soundcheckChannels.clear();
         ctx.log.info ("Virtual soundcheck off: the channels listen to their MAIN inputs");
         return;
     }
@@ -990,15 +1000,19 @@ void RecorderPage::virtualSoundcheck()
                                                 "No track records a channel's input or strip. RECORD ALL CHANNELS sets them up.");
         return;
     }
-    // Each channel's ALT input becomes its track's playback channel; the
-    // global INPUT SELECT then switches every channel to ALT at once.
+    // Each channel's ALT input becomes its track's playback channel, and the
+    // channel goes to ALT in GLOBAL INPUT SELECT ENABLE, so the global MAIN /
+    // ALT switch and AUTO INPUT SELECT switch them all.
+    soundcheckChannels.clear();
     for (auto& r : routes)
         for (auto& s : engine.getChannels())
             if (s->getNumber() == r.channelNumber)
+            {
+                soundcheckChannels.push_back ({ r.channelNumber, s->isSrcAuto() });
                 s->setAltInput (Recorder::playbackSource (r.playChannel), r.stereo ? Recorder::playbackSource (r.playChannel + 1) : -1);
-    inputSelectBeforeSoundcheck = std::pair { engine.isInputSelectGlobal(), engine.isGlobalAlt() };
-    engine.setInputSelectGlobal (true);
-    engine.setGlobalAlt (true);
+                s->setSrcAuto (true);
+                s->setAltSelected (true);
+            }
     ctx.log.info ("Virtual soundcheck: " + juce::String ((int) routes.size()) + " channels play back their tracks (ALT inputs, INPUT SELECT GLOBAL)");
 }
 

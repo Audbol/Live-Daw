@@ -685,7 +685,7 @@ fn osc_and_native_reach_sources_outputs_safes_and_settings() {
     // A host setting: METERS > bus meters PRE.
     c.send(&Message::new("/cfg/mtr/mtrpage/bus", vec![Arg::Str("PRE".into())]));
     assert_eq!(text(c.get("/cfg/mtr/mtrpage/bus")), "PRE");
-    assert_eq!(state.take_host_setting(), Some(("setup.meterTapPre.1", "1".to_owned())));
+    assert_eq!(state.take_host_setting(), Some(("setup.meterPageTapPre.1", "1".to_owned())));
     // A stored factory value, kept as set.
     assert_eq!(text(c.get("/cards/wmadi/mode")), "SFP1");
     c.send(&Message::new("/cards/wmadi/mode", vec![Arg::Str("BNC".into())]));
