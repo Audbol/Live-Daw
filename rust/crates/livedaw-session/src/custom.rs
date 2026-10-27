@@ -16,8 +16,8 @@
 use crate::xml::{parse_int_prefix, Element};
 
 /// The upper part's layers (UP / DOWN), then USER, the three legacy F1-F3
-/// layers, DAW 1-4 and the COMPACT's nine key sets.
-pub const NUM_LAYERS: usize = 33;
+/// layers, DAW 1-4, the COMPACT's nine key sets and its five DAW mode sets.
+pub const NUM_LAYERS: usize = 38;
 /// The lower part's USER layer (`/$ctl/user/user`).
 pub const USER_LAYER: usize = 16;
 /// Where shows saved before layout 2 kept the 4-Channel section's F1-F3
@@ -35,7 +35,14 @@ pub const FIRST_DAW_LAYER: usize = 20;
 pub const FIRST_COMPACT_USER_LAYER: usize = 24;
 pub const COMPACT_MAIN_MATRIX_LAYER: usize = 28;
 pub const FIRST_COMPACT_DCA_LAYER: usize = 29;
-/// How many layers the COMPACT's USER and DCA sets have each.
+/// The WING COMPACT's keys in DAW mode (DAW LAYER on a custom control key):
+/// DAW 1-4 .. DAW 13-16 the 16 keys, DAW MODE KEYS the four keys BUS, DCA,
+/// MAIN MATRIX and USER. A WING COMPACT's owner: in DAW mode these keys do
+/// nothing until the user assigns them, so they start not assigned. The
+/// remote protocols have no node for them (Sidecar's own; saved with the show).
+pub const FIRST_COMPACT_DAW_LAYER: usize = 33;
+pub const COMPACT_DAW_MODE_LAYER: usize = 37;
+/// How many layers the COMPACT's USER, DCA and DAW key sets have each.
 pub const NUM_COMPACT_SETS: usize = 4;
 pub const NUM_CONTROLS: usize = 4;
 
@@ -495,7 +502,11 @@ mod tests {
         let mut cc = CustomControls::default();
         let last_user = FIRST_COMPACT_USER_LAYER + NUM_COMPACT_SETS - 1;
         assert_eq!((last_user + 1, COMPACT_MAIN_MATRIX_LAYER + 1), (COMPACT_MAIN_MATRIX_LAYER, FIRST_COMPACT_DCA_LAYER));
-        assert_eq!(FIRST_COMPACT_DCA_LAYER + NUM_COMPACT_SETS, NUM_LAYERS);
+        assert_eq!(FIRST_COMPACT_DCA_LAYER + NUM_COMPACT_SETS, FIRST_COMPACT_DAW_LAYER);
+        assert_eq!(
+            (FIRST_COMPACT_DAW_LAYER + NUM_COMPACT_SETS, COMPACT_DAW_MODE_LAYER + 1),
+            (COMPACT_DAW_MODE_LAYER, NUM_LAYERS)
+        );
         {
             let c = cc.control_mut(last_user, 3).unwrap();
             c.upper = CcFunction { category: 10, target: 4, option: 0 };
@@ -510,6 +521,37 @@ mod tests {
         assert_eq!(loaded, cc);
         assert_eq!(loaded.control(last_user, 3).unwrap().name, "SCENE 4");
         assert_eq!(cc.to_xml().children_named("Control").count(), 3);
+    }
+
+    #[test]
+    fn compact_daw_sets_start_empty_and_round_trip() {
+        // A WING COMPACT's owner: in DAW mode its 16 keys and four mode keys do
+        // nothing until assigned (unlike the full-size WING's DAW 1-4 layers).
+        let factory = CustomControls::default();
+        for l in FIRST_COMPACT_DAW_LAYER..=COMPACT_DAW_MODE_LAYER {
+            for i in 0..NUM_CONTROLS {
+                assert!(factory.control(l, i).unwrap().is_default(), "layer {l} control {i}");
+            }
+        }
+        let mut cc = CustomControls::default();
+        cc.control_mut(FIRST_COMPACT_DAW_LAYER + 3, 3).unwrap().upper = CcFunction { category: 13, target: 0, option: 1 };
+        {
+            let c = cc.control_mut(COMPACT_DAW_MODE_LAYER, 0).unwrap();
+            c.upper = CcFunction { category: OTHER_CATEGORY, target: 0, option: other::DAW_LAYER };
+            c.name = "EXIT DAW".into();
+        }
+        let mut loaded = CustomControls::default();
+        loaded.from_xml(&cc.to_xml());
+        assert_eq!(loaded, cc);
+        assert_eq!(loaded.control(COMPACT_DAW_MODE_LAYER, 0).unwrap().name, "EXIT DAW");
+        // A show saved before these sets loads with them empty.
+        let mut old = Element::new("CustomControls");
+        old.set(FACTORY_ATTR, FACTORY_WING).set(LAYOUT_ATTR, LAYOUT);
+        old.add_new("Control").set("layer", 32).set("index", 3).set("bu", "3,2,0");
+        let mut cc = CustomControls::default();
+        cc.from_xml(&old);
+        assert_eq!(cc.control(32, 3).unwrap().upper, CcFunction { category: 3, target: 2, option: 0 });
+        assert!(cc.control(FIRST_COMPACT_DAW_LAYER, 0).unwrap().is_default());
     }
 
     #[test]

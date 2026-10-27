@@ -203,28 +203,34 @@ like the finish. The COMPACT is black, so it always shows the black finish. It f
     it come onto the faders as their send levels; held, it turns on Sends on Fader to
     the matrix (MATRIX SPILL, on at first as on a factory-set WING, off swaps them).
     Either way the main or matrix goes on fader 13.
-  - DCA: a press puts the DCA on fader 13; with SETUP > SURFACE > DCA SPILL ON SELECT
-    it spills the DCA instead. With USE DCA BUTTONS 1-16 AS CC on, the keys are the
-    custom control keys of the sets D1-D4.
+  - DCA: a press (or a hold) spills the DCA, its members coming onto the faders, and
+    puts it on fader 13, both, as on a WING COMPACT. With USE DCA BUTTONS 1-16 AS CC
+    on, the keys are the custom control keys of the sets D1-D4.
   - USER: the custom control keys of the sets U1-U4 (keys 1-4 U1, 5-8 U2, 9-12 U3,
     13-16 U4).
-  - A key pressed again lets its bus, main or matrix go: fader 13 goes back to MAIN
-    FADER, and Sends on Fader or the spill ends.
+  - A key pressed again lets its bus, main, matrix or DCA go: fader 13 goes back to
+    MAIN FADER, and Sends on Fader or the spill ends.
   - DCA assignment, as on the console: press a DCA key, hold fader 13's SELECT,
     and press the SELECT keys of the strips to put in the DCA (or take out; the
     layer keys still work meanwhile). While SELECT is held, the strips' SELECT
     keys light on the DCA's members.
 - **VIEW** opens the FADERS screen. Hold it for CUSTOM CONTROLS on the keys' set (USER
-  1-4 in USER mode, MAIN/MTX 5-8 in MAIN MATRIX mode, DCA 1-4 in DCA mode); ‹ › step
-  through the nine sets. Each set has four keys, each with a function, a name and a
+  1-4 in USER mode, MAIN/MTX 5-8 in MAIN MATRIX mode, DCA 1-4 in DCA mode, DAW KEYS
+  1-4 in DAW mode); ‹ › step through the sets. Each set has four keys, each with a function, a name and a
   colour. The colour shows beside the key's name on the LCD. A key with a parameter
   (FX PAR) also hands it to the knob right of the display, as the COMPACT's "hold the
   custom control and use the knob to the right of the main display". **DAW
   LAYER** (CC EDIT > OTHER) is the COMPACT's way into DAW remote control: assign it
   to a key, and that key switches DAW mode on and off as the full-size WING's DAW key
-  does. In DAW mode the keys BUS, DCA, MAIN MATRIX and USER pick the DAW layers DAW 1-4
-  (the LCD reads DAW n), keys 1-4 play the layer's upper keys and keys 5-8 its lower
-  keys (as long as they're held), and VIEW held opens the layer on CC EDIT.
+  does. In DAW mode the 16 keys and the four mode keys do nothing until you assign
+  them, as on a WING COMPACT: they play sets of their own, **DAW KEYS 1-4** .. **DAW
+  KEYS 13-16** (keys 1-16) and **DAW MODE KEYS** (BUS, DCA, MAIN MATRIX, USER), empty
+  at first. Hold VIEW in DAW mode to edit them on CC EDIT (any function: DAW BUTTONS,
+  MIDI, mutes ...). A key acts as long as it's held, and the LCD (which reads DAW)
+  names it. So that you can get out again, a key whose DAW control is empty but whose
+  control in the mode's own set is DAW LAYER still switches DAW mode off. The sets are
+  saved with the show (custom control layers 33-37); WING remote clients don't see
+  them, as the WING has no node for them.
 - **Fader 13** is the main fader: SETUP > SURFACE > MAIN FADER > SOURCE (OFF, a main,
   a matrix or a DCA), MAIN 1 at first. The BUS and MAIN MATRIX keys put another bus,
   main or matrix on it while their key is selected. KEEP MAIN FADER leaves it on MAIN
@@ -232,10 +238,13 @@ like the finish. The COMPACT is black, so it always shows the black finish. It f
   LCD beside it shows what fader 13 controls and what the 16 keys are, a lit key's
   cell filled.
 - SETUP > SURFACE has the COMPACT's own rows: USE DCA BUTTONS 1-16 AS CC, MAIN FADER,
-  KEEP MAIN FADER, **DCA SPILL ON SELECT** (a DCA key's press spills the DCA instead of
-  putting it on fader 13), **BUS SPILL**, **MAIN SPILL** and **MATRIX SPILL** (on: the
-  key's press spills and its hold turns on Sends on Fader; off: the other way round)
-  and **DCA SELECT SPILL** (SELECT on a DCA strip spills it). The full-size WING's rows
+  KEEP MAIN FADER, **DCA SPILL ON SELECT** (the COMPACT's one DCA spill setting, off
+  at first: on, SELECT on a DCA strip spills it, as the full-size WING's DCA SPILL; a
+  DCA key always spills its DCA and puts it on fader 13), **BUS SPILL**, **MAIN
+  SPILL** and **MATRIX SPILL** (on: the key's press spills and its hold turns on Sends
+  on Fader; off: the other way round; at first BUS and MAIN off, MATRIX on). Settings
+  from an earlier Sidecar with its own DCA SELECT SPILL row on turn DCA SPILL ON SELECT
+  on. The full-size WING's rows
   USE F1-F3 AS CUSTOM CONTROLS, RIGHT SECTION SENDS ON FADER, USER LAYER LINK and DCA
   SPILL are hidden.
 - The COMPACT has no channel strip section, custom controls section, 4-Channel
@@ -252,7 +261,7 @@ like the finish. The COMPACT is black, so it always shows the black finish. It f
   Fader 13, the keys' mode and CH AUTOSELECT CMPCT are `/$ctl/cfg/mfdr`, `cscmode`
   and `autosel_CMPCT`, both ways; KEEP MAIN FADER, DCA SPILL ON SELECT, BUS, MAIN and
   MATRIX SPILL and USE DCA BUTTONS 1-16 AS CC are `mfdrkeep`, `dcaspill`, `busspill`,
-  `mainspill`, `mtxspill` and `dcacc` (DCA SELECT SPILL has no node). The
+  `mainspill`, `mtxspill` and `dcacc`. The
   key sets are `/$ctl/user/U1`-`U4`, `MM` and `D1`-`D4`, so WING Edit and Mixing
   Station see and set them (on the full-size WING too, as WING Edit lists them there),
   and the virtual layers are `/$ctl/layer/VRT/1`-`8`.

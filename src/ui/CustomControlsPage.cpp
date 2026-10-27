@@ -732,6 +732,10 @@ juce::String layerName (int layer)
         return "USER";
     if (layer == kCompactMainMatrixLayer)
         return "MAIN/MTX 5-8";
+    if (layer == kCompactDawModeLayer)
+        return "DAW MODE KEYS";
+    if (layer >= kFirstCompactDawLayer && layer < kCompactDawModeLayer)
+        return "DAW KEYS " + juce::String ((layer - kFirstCompactDawLayer) * 4 + 1) + "-" + juce::String ((layer - kFirstCompactDawLayer) * 4 + 4);
     if (isCompactLayer (layer))
     {
         const int first = (layer < kCompactMainMatrixLayer ? layer - kFirstCompactUserLayer : layer - kFirstCompactDcaLayer) * 4 + 1;

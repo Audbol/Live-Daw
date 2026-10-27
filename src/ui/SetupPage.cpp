@@ -1203,9 +1203,10 @@ namespace
                            3.6f);
             // The COMPACT's (WING manual 5.5, FADERS, in its order): MAIN FADER is fader
             // 13's own assignment, KEEP MAIN FADER keeps it there whatever key is pressed,
-            // DCA SPILL ON SELECT spills a DCA key's DCA on a press (else the DCA goes on
-            // fader 13), BUS / MAIN / MATRIX SPILL put a key's spill on the press and its
-            // sends on the hold, DCA SELECT SPILL spills a DCA strip on its SELECT.
+            // DCA SPILL ON SELECT spills a DCA strip on its SELECT (the COMPACT's one DCA
+            // spill setting, /$ctl/cfg/dcaspill; a DCA key always spills its DCA and puts
+            // it on fader 13), BUS / MAIN / MATRIX SPILL put a key's spill on the press and
+            // its sends on the hold.
             compactRows.push_back (&faders.addRow ("MAIN FADER",
                                                    std::make_unique<DropdownField> ("SOURCE",
                                                                                     [this]
@@ -1224,7 +1225,6 @@ namespace
             compactRows.push_back (&faders.addRow ("BUS SPILL", compactSetting (uiprefs::compactBusSpill, uiprefs::compactBusSpillDefault), 1.3f));
             compactRows.push_back (&faders.addRow ("MAIN SPILL", compactSetting (uiprefs::compactMainSpill, uiprefs::compactMainSpillDefault), 1.3f));
             compactRows.push_back (&faders.addRow ("MATRIX SPILL", compactSetting (uiprefs::compactMatrixSpill, uiprefs::compactMatrixSpillDefault), 1.3f));
-            compactRows.push_back (&faders.addRow ("DCA SELECT SPILL", compactSetting (uiprefs::compactDcaSelectSpill, false), 1.3f));
             addAndMakeVisible (faders);
 
             sectionsKey.offColour = Dark::header;

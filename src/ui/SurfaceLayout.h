@@ -231,14 +231,14 @@ namespace compact
     /** What key `key` (0-based) puts on fader 13 when pressed [WING COMPACT]:
         in BUS mode BUS 1-16, in MAIN MATRIX mode MAIN 1-4 on keys 1-4 and
         MATRIX 1-8 on keys 9-16 (keys 5-8 do nothing); in DCA mode DCA 1-16
-        when a press shows the DCA rather than spilling it (`dcaShow`: DCA
-        SPILL ON SELECT off, /$ctl/cfg/dcaspill "0: push->dca show");
-        nothing in USER mode. */
-    inline std::optional<MainFader> keyMainFader (KeyMode m, int key, bool dcaShow = false)
+        (a WING COMPACT's owner: a DCA key spills its DCA and puts it on fader
+        13, see dcaActions; not with USE DCA BUTTONS 1-16 AS CC, which the
+        caller checks); nothing in USER mode. */
+    inline std::optional<MainFader> keyMainFader (KeyMode m, int key)
     {
         if (m == KeyMode::Bus && key >= 0 && key < 16)
             return MainFader { MainFader::Bus, key + 1 };
-        if (m == KeyMode::Dca && dcaShow && key >= 0 && key < 16)
+        if (m == KeyMode::Dca && key >= 0 && key < 16)
             return MainFader { MainFader::Dca, key + 1 };
         if (m == KeyMode::Main && key >= 0 && key < 4)
             return MainFader { MainFader::Main, key + 1 };
@@ -253,8 +253,9 @@ namespace compact
     }
 
     /** The COMPACT's custom control key sets (/$ctl/user/U1-U4, MM, D1-D4;
-        WING manual 4.8), counted from USER 1-4. */
-    constexpr int kSetMainMatrix = 4, kFirstDcaSet = 5;
+        WING manual 4.8), counted from USER 1-4; then Sidecar's sets for DAW
+        mode (no remote node): DAW KEYS 1-4 .. 13-16 and DAW MODE KEYS. */
+    constexpr int kSetMainMatrix = 4, kFirstDcaSet = 5, kFirstDawSet = 9, kSetDawModeKeys = 13;
 
     /** A key's custom control: the set and the control in it (0-3). */
     struct KeyControl
@@ -266,11 +267,16 @@ namespace compact
     /** The custom control key `key` (0-based) plays, if any [WING manual 4.2]:
         in USER mode the sets U1-U4 (keys 1-4 U1, ... 13-16 U4); in MAIN MATRIX
         mode keys 5-8, between MAIN 1-4 and MATRIX 1-8, the set M/M; in DCA
-        mode with USE DCA BUTTONS 1-16 AS CC (`dcaCustom`) the sets D1-D4. */
-    inline std::optional<KeyControl> keyControl (KeyMode m, int key, bool dcaCustom)
+        mode with USE DCA BUTTONS 1-16 AS CC (`dcaCustom`) the sets D1-D4. In
+        DAW mode (`daw`: DAW LAYER on) every key plays the DAW KEYS sets
+        whatever the mode, empty until the user assigns them (a WING COMPACT's
+        owner: in DAW mode the keys do nothing by default). */
+    inline std::optional<KeyControl> keyControl (KeyMode m, int key, bool dcaCustom, bool daw = false)
     {
         if (key < 0 || key >= kNumKeys)
             return std::nullopt;
+        if (daw)
+            return KeyControl { kFirstDawSet + key / 4, key % 4 };
         if (m == KeyMode::User)
             return KeyControl { key / 4, key % 4 };
         if (m == KeyMode::Main && key >= 4 && key < 8)
@@ -278,6 +284,15 @@ namespace compact
         if (m == KeyMode::Dca && dcaCustom)
             return KeyControl { kFirstDcaSet + key / 4, key % 4 };
         return std::nullopt;
+    }
+
+    /** The custom control mode key `modeKey` (0-3: BUS, DCA, MAIN MATRIX,
+        USER) plays in DAW mode: the set DAW MODE KEYS (empty at first). */
+    inline std::optional<KeyControl> modeKeyControl (int modeKey)
+    {
+        if (modeKey < 0 || modeKey >= 4)
+            return std::nullopt;
+        return KeyControl { kSetDawModeKeys, modeKey };
     }
 
     /** What a BUS, MAIN or MATRIX key does besides putting its bus, main or
@@ -309,6 +324,13 @@ namespace compact
         a press Sends on Fader to the bus and a hold spills it (WING manual 4.2,
         confirmed on a WING COMPACT); on, the other way round. */
     inline KeyActions busActions (bool busSpill = false) { return spillActions (busSpill); }
+
+    /** A DCA mode key's press and hold (USE DCA BUTTONS 1-16 AS CC off): both
+        spill the DCA (its members onto the faders) as the key puts it on
+        fader 13 (a WING COMPACT's owner, factory settings); pressed again it
+        ends the spill. Not a setting: DCA SPILL ON SELECT (/$ctl/cfg/dcaspill)
+        is about a DCA strip's SELECT (FaderStrip::pressSelect). */
+    inline KeyActions dcaActions() { return { KeyAction::Spill, KeyAction::Spill }; }
 
     /** A MAIN MATRIX mode key's press and hold: MAIN SPILL for keys 1-4 (off
         at first: a press sends, a hold spills the main), MATRIX SPILL for keys

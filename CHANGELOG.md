@@ -25,9 +25,8 @@ All notable changes to Sidecar are listed here. Versions follow
   `25-36`, `37-48 AUX IN`, `BUS MASTER`, `MAIN MATRIX`, `DCA`, `USER 1`, `USER 2`) and
   the shift keys, and the key section. **BUS**, **DCA**, **MAIN MATRIX** and **USER**
   choose what the 16 keys do. BUS: a key puts its bus on fader 13. MAIN
-  MATRIX: keys 1-4 put MAIN 1-4 on fader 13, keys 9-16 MATRIX 1-8. DCA: a key puts
-  its DCA on fader 13 or spills it (DCA SPILL ON SELECT). USER: custom control keys
-  (see the key sets below).
+  MATRIX: keys 1-4 put MAIN 1-4 on fader 13, keys 9-16 MATRIX 1-8. DCA: a key spills
+  its DCA and puts it on fader 13. USER: custom control keys (see the key sets below).
   **Fader 13** is the main fader, MAIN 1 at first; it has no scribble strip, only its
   meter, and the small LCD beside it names it and the 16 keys. There is no channel
   strip, custom controls, 4-Channel, center or right section, as on the console, and
@@ -44,7 +43,7 @@ All notable changes to Sidecar are listed here. Versions follow
   ... 13-16). MAIN MATRIX mode: M/M on keys 5-8, which were empty. DCA mode with SETUP
   > SURFACE > USE DCA BUTTONS 1-16 AS CC: D1-D4. Each set has four keys with a
   function, a name and a colour, shown on the LCD. Holding **VIEW** opens CUSTOM
-  CONTROLS on the keys' set (USER 1-4 .. DCA 13-16, ‹ › through the nine); VIEW
+  CONTROLS on the keys' set (USER 1-4 .. DCA 13-16 and the DAW mode sets, ‹ › through them); VIEW
   pressed opens FADERS. Before, USER mode played the USER layer and the custom control
   layer shown. WING REMOTE: `/$ctl/user/U1`-`U4`, `MM` and `D1`-`D4` while the console
   is a COMPACT (the full-size console keeps `U1`-`U3` as the 4-Channel section's F1-F3
@@ -55,8 +54,7 @@ All notable changes to Sidecar are listed here. Versions follow
   The bus, main or matrix still goes on fader 13. A selected key pressed again lets
   go: fader 13 goes back to MAIN FADER and the SOF or spill ends. SETUP > SURFACE on a
   COMPACT has MAIN FADER, KEEP MAIN FADER, DCA SPILL ON SELECT, BUS, MAIN and MATRIX
-  SPILL (which of press and hold spills or sends), DCA SELECT SPILL and USE DCA
-  BUTTONS 1-16 AS CC; the full-size console's F1-F3, right section SOF, user layer
+  SPILL (which of press and hold spills or sends) and USE DCA BUTTONS 1-16 AS CC; the full-size console's F1-F3, right section SOF, user layer
   link and DCA SPILL rows are hidden. WING REMOTE: `/$ctl/cfg/mfdrkeep`, `busspill`,
   `mainspill`, `mtxspill`, `dcaspill`, `dcacc`.
 - Main spill: the channels, aux and buses feeding a main come onto the faders, as
@@ -231,18 +229,23 @@ All notable changes to Sidecar are listed here. Versions follow
   49-56 on both models. BUS SoF/SPILL ACTIVATES SOLO solos a bus, main or matrix
   spilled, as it did for Sends on Fader. C ABI version 22: spill kind 6.
 - WING COMPACT SETUP > SURFACE (manual 5.5, FADERS, in its order): **DCA SPILL ON
-  SELECT** (`/$ctl/cfg/dcaspill`, "1: push->dca spill, 0: push->dca show"): on, a DCA
-  key's press spills the DCA; off (the factory setting), it puts the DCA on fader 13
-  and selects it for the DCA assignment with fader 13's SELECT. **BUS SPILL**
+  SELECT** (`/$ctl/cfg/dcaspill`, off at first), the COMPACT's one DCA spill setting:
+  on, a DCA strip's SELECT spills it, as the full-size WING's DCA SPILL. A DCA key
+  always spills its DCA and puts it on fader 13, and selects it for the DCA assignment
+  with fader 13's SELECT (a WING COMPACT's owner). **BUS SPILL**
   (`/$ctl/cfg/busspill`, new), **MAIN SPILL** and **MATRIX SPILL**: on, a key's press
   spills its bus, main or matrix and a hold turns on Sends on Fader; off, the other way
   round. MATRIX SPILL now works (Sidecar had no matrix spill): on, as a factory-set
-  WING has it, a MATRIX key pressed spills the matrix. **DCA SELECT SPILL**: a DCA
-  strip's SELECT spills it (Sidecar's own setting; the WING tree has no node for it).
-- WING COMPACT in DAW mode (DAW LAYER on a custom control key): the four mode keys
-  BUS, DCA, MAIN MATRIX and USER pick the DAW layers DAW 1-4 and the LCD reads DAW n;
-  keys 1-4 play the layer's upper keys and keys 5-8 its lower keys (as long as held:
-  DAW BUTTONS push), named on the LCD. VIEW held opens the DAW layer on CC EDIT.
+  WING has it, a MATRIX key pressed spills the matrix and a hold turns on Sends on
+  Fader to it; MAIN and BUS keys send on a press and spill on a hold.
+- WING COMPACT in DAW mode (DAW LAYER on a custom control key, manual 4.8): the 16
+  keys and the four mode keys do nothing until you assign them (a WING COMPACT's
+  owner): they play custom control sets of their own, **DAW KEYS 1-4** .. **13-16**
+  and **DAW MODE KEYS**, empty at first and edited in CC EDIT like the other COMPACT
+  sets (VIEW held opens DAW KEYS 1-4); a key acts while held (DAW BUTTONS push) and is
+  named on the LCD, which reads DAW. A key whose DAW control is empty but whose own
+  set's control is DAW LAYER still leaves DAW mode. Stored with the show as custom
+  control layers 33-37; the WING tree has no node for them.
 - Custom controls: **FADER START** (WING `FSTART`): a key on a channel, aux, bus, main
   or matrix that lights while its fader is up (the fader start contact); **DAW
   V-POTS** on a key (`DAWENC`): M1-M8 / EXT1-16 pushed while the key is held, turned a
@@ -275,6 +278,10 @@ All notable changes to Sidecar are listed here. Versions follow
 
 ### Changed
 
+- A RATIO picked from a list reads "3:1" everywhere when the ratio is whole (an
+  expander's "1:3"; a WING's owner), "2.5:1" or "1.43:1" when it isn't: also on the
+  knobs, the FX rack's tiles and a fader strip with an FX parameter, which showed
+  "3.00". The earlier "2.0:1" is gone.
 - Display screens matched to screenshots of a WING (firmware 3.1), side by side at 1280 x 800:
   - Status bar: the WING-LIVE cards are white outlines with a clipped corner over a separate
     "LIVE" strip with the dots at its ends; the USB stick, the SETTINGS gear and the padlocks
@@ -313,7 +320,9 @@ All notable changes to Sidecar are listed here. Versions follow
     "3:1" on the parameter bar as the console shows it ("2.5:1", "1.43:1" keep their digits).
   - The model list's GATE / DUCKER / COMPRESSOR / EXPANDER tiles are miniatures of the slot
     screen: a thin grey curve with an orange stretch, the threshold handle, a black ENVELOPE
-    with its handles. Model names sit 2 px higher.
+    with its handles, drawn at the model's factory values (the list's pictures are fixed,
+    the loaded model's too: they don't follow the strip's settings). Model names sit 2 px
+    higher.
   - Fields: values in the console's heavier weight (knob boxes too), the drop-down triangle
     20 x 11 px light grey, the ">" key 14 x 24 px with 3 px strokes (also INS's key beside
     FX PROCESSOR). Screen keys have the console's black frame (2-3 px; 4 px round a slot's ON).
