@@ -2,7 +2,7 @@
 
 use super::shared::{advance, tri_sine_square};
 use crate::wing::fx::blocks::{coef, Envelope, Smoothed};
-use crate::wing::fx::{FxAlgo, FxContext};
+use crate::wing::fx::{FxAlgo, FxContext, FxLive};
 use crate::wing::Params;
 use std::f32::consts::FRAC_PI_4;
 
@@ -103,6 +103,20 @@ impl FxAlgo for Panner {
             }
             *l *= self.gain[0];
             *r *= self.gain[1];
+        }
+    }
+
+    fn live(&self, what: FxLive) -> f32 {
+        match what {
+            FxLive::LfoPhase => self.phase,
+            FxLive::LfoPhase2 => (self.phase + self.offset.value).rem_euclid(1.0),
+            FxLive::Envelope => (2.5 * self.env.env).clamp(0.0, 1.0),
+            // Where the sound sits between the speakers: -1 left .. 1 right.
+            FxLive::Needle => {
+                let [l, r] = self.gain;
+                ((r - l) / (l + r).max(1e-6)).clamp(-1.0, 1.0)
+            }
+            _ => 0.0,
         }
     }
 

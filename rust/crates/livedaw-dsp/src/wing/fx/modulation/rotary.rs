@@ -1,7 +1,7 @@
 //! ROTARY: a Leslie 122 style rotating speaker.
 
 use crate::wing::fx::blocks::{fast_tanh, DelayLine, OnePole, Smoothed, Svf};
-use crate::wing::fx::{FxAlgo, FxContext};
+use crate::wing::fx::{FxAlgo, FxContext, FxLive};
 use crate::wing::Params;
 use std::f32::consts::{FRAC_1_SQRT_2, TAU};
 
@@ -194,6 +194,15 @@ impl FxAlgo for Rotary {
             let mix = self.mix.tick();
             *l = dl + (out[0] - dl) * mix;
             *r = drr + (out[1] - drr) * mix;
+        }
+    }
+
+    fn live(&self, what: FxLive) -> f32 {
+        match what {
+            FxLive::LfoPhase => self.horn.angle,
+            FxLive::LfoPhase2 => self.drum.angle,
+            FxLive::Needle => self.horn.rate,
+            _ => 0.0,
         }
     }
 

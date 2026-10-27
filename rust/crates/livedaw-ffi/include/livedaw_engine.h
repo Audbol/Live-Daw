@@ -28,7 +28,7 @@ static_assert (sizeof (std::atomic<float>) == 4 && std::atomic<float>::is_always
 static_assert (sizeof (std::atomic<bool>) == 1 && std::atomic<bool>::is_always_lock_free);
 static_assert (sizeof (std::atomic<int32_t>) == 4 && std::atomic<int32_t>::is_always_lock_free);
 
-constexpr int kAbiVersion = 22;
+constexpr int kAbiVersion = 23;
 constexpr int kMaxBuses = 16384;
 constexpr int kNumMains = 4;
 constexpr int kNumMatrices = 8;
@@ -909,6 +909,14 @@ extern "C"
     /** Live gain of a dynamic band of a slot's device (TRIPLE DEQ bands 0-2),
         dB, signed (cut < 0, boost > 0); 0 for other devices. */
     float ld_fx_band_gain (const Engine*, int32_t slot, int32_t band);
+    /** ABI 23: the input and output peaks (linear) of a slot since the last call into
+        out[0..4] (in L, in R, out L, out R); taking them resets them (one reader). */
+    bool ld_fx_io_peaks (const Engine*, int32_t slot, float* out);
+    /** ABI 23: a live value of a slot's device for its panel: 0 = LFO position 0..1,
+        1 = second LFO position, 2 = envelope 0..1, 3 = needle (TREMOLO L-C-R -1..1,
+        ROTARY horn Hz, PITCH FIX cents), 4-8 = band levels 1-5 (linear), 9 = note heard
+        (0 = C .. 11 = B, -1 none). */
+    float ld_fx_live (const Engine*, int32_t slot, int32_t what);
     void ld_fx_clear_flags (const Engine*, int32_t slot);
     float ld_fx_load (const Engine*, int32_t slot);
     int32_t ld_fx_num_users (const Engine*, int32_t slot);

@@ -3,7 +3,7 @@
 
 use super::shared::{advance, loop_limit, ms, sine_tri, CutFilter};
 use crate::wing::fx::blocks::{shape, DelayLine, Smoothed, Svf, Wave};
-use crate::wing::fx::{FxAlgo, FxContext};
+use crate::wing::fx::{FxAlgo, FxContext, FxLive};
 use crate::wing::Params;
 
 /// Triangle with rounded turning points (no sudden pitch flip at the ends).
@@ -131,6 +131,15 @@ impl FxAlgo for Dimension {
         }
     }
 
+    fn live(&self, what: FxLive) -> f32 {
+        match what {
+            FxLive::LfoPhase => self.phase,
+            // The second line sweeps the other way.
+            FxLive::LfoPhase2 => (self.phase + 0.5).rem_euclid(1.0),
+            _ => 0.0,
+        }
+    }
+
     fn reset(&mut self) {
         for l in &mut self.lines {
             l.clear();
@@ -228,7 +237,6 @@ impl FxAlgo for Chorus {
     }
 
     fn process(&mut self, left: &mut [f32], right: &mut [f32]) {
-        self.cut.update(left.len());
         for (l, r) in left.iter_mut().zip(right.iter_mut()) {
             let (dl, dr) = (*l, *r);
             self.lines[0].push(dl);
@@ -248,6 +256,14 @@ impl FxAlgo for Chorus {
             let mix = self.mix.tick();
             *l = dl + (wl - dl) * mix;
             *r = dr + (wr - dr) * mix;
+        }
+    }
+
+    fn live(&self, what: FxLive) -> f32 {
+        match what {
+            FxLive::LfoPhase => self.phase,
+            FxLive::LfoPhase2 => (self.phase + self.offset.value).rem_euclid(1.0),
+            _ => 0.0,
         }
     }
 
@@ -343,9 +359,6 @@ impl FxAlgo for Flanger {
     }
 
     fn process(&mut self, left: &mut [f32], right: &mut [f32]) {
-        let n = left.len();
-        self.cut.update(n);
-        self.fcut.update(n);
         for (l, r) in left.iter_mut().zip(right.iter_mut()) {
             advance(&mut self.phase, self.inc);
             let off = self.offset.tick();
@@ -360,6 +373,14 @@ impl FxAlgo for Flanger {
                 let wet = self.cut.tick(ch, y);
                 *x += (wet - *x) * mix;
             }
+        }
+    }
+
+    fn live(&self, what: FxLive) -> f32 {
+        match what {
+            FxLive::LfoPhase => self.phase,
+            FxLive::LfoPhase2 => (self.phase + self.offset.value).rem_euclid(1.0),
+            _ => 0.0,
         }
     }
 

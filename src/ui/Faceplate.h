@@ -2,6 +2,7 @@
 
 #include "engine/Models.h"
 #include "ui/LookAndFeel.h"
+#include "ui/MeterBallistics.h"
 
 #include <juce_gui_basics/juce_gui_basics.h>
 
@@ -76,6 +77,15 @@ public:
                std::function<float (int band)> bandGain = {});
     void unbind();
 
+    /** The slot's live values for the meters on the drawn panel (bind clears
+        them): `ioPeaks` takes the input and output peaks since the last call
+        (in L, in R, out L, out R, linear), `live` reads a device value
+        (ld_fx_live's index). The meters move with the shared ballistics and
+        repaint only themselves. */
+    void setLiveFeeds (std::function<std::array<float, 4>()> ioPeaks, std::function<float (int what)> live);
+    /** Whether the bound panel shows live values (it has meters fed by the slot). */
+    bool hasLiveMeters() const noexcept { return ! liveElements.empty(); }
+
     /** A control was touched (index into the model's parameters). */
     std::function<void (int param)> onTouched;
     int getLastTouched() const noexcept { return lastTouched; }
@@ -134,6 +144,8 @@ private:
     std::atomic<float>* values = nullptr;
     std::function<float()> meterFn;
     std::function<float (int)> bandFn;
+    std::function<std::array<float, 4>()> peaksFn;
+    std::function<float (int)> liveFn;
     FaceplateStyle style;
 
     const fp::Design* design = nullptr;
@@ -147,6 +159,18 @@ private:
     std::vector<float> shown;
     float shownMeter = 0.0f;
     std::array<float, 3> shownBands {};
+
+    // Live meters: the design's elements fed by the slot, what each showed
+    // last, the level ballistics (in L, in R, out L, out R) and the needles'
+    // slower swing, and the device's values.
+    void updateLiveMeters();
+    float feedValue (int feed, bool needle) const;
+    std::vector<int> liveElements;
+    std::vector<float> liveShown;
+    std::array<meters::Ballistics, 4> levels {};
+    std::array<float, 4> needleDb {};
+    std::array<float, 16> liveValues {};
+    double lastLiveMs = 0.0;
     int dragging = -1, lastTouched = -1;
     float dragStartPos = 0.0f;
 };

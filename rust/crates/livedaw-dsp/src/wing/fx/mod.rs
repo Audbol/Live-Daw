@@ -23,6 +23,8 @@ mod eqfx;
 mod modulation;
 mod pitch;
 mod reverb;
+#[cfg(test)]
+mod time_audit;
 mod utility;
 
 use super::{ModelCategory, ModelSpec, Params, FX_MODELS, MAX_FX_PARAMS};
@@ -58,6 +60,62 @@ pub trait FxAlgo: Send {
     /// with dynamic bands (TRIPLE DEQ); 0 otherwise.
     fn band_gain(&self, _band: usize) -> f32 {
         0.0
+    }
+
+    /// A live value for the panel's meters and graphs (see [`FxLive`]); 0
+    /// for what the device doesn't have. Audio thread, cheap.
+    fn live(&self, _what: FxLive) -> f32 {
+        0.0
+    }
+}
+
+/// What a device reports live for its panel (read by the screen while it
+/// runs): its LFO's position so the LFO graph moves with it, its envelope
+/// follower, the one moving part of its unit's front, band levels and the
+/// note it hears.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(i32)]
+pub enum FxLive {
+    /// The modulation's position in its cycle, 0..1 (left / first voice;
+    /// ROTARY: the horn's angle).
+    LfoPhase = 0,
+    /// The right / second voice's position, 0..1 (ROTARY: the drum's angle).
+    LfoPhase2 = 1,
+    /// The envelope follower, 0..1 (PHASER, TREMOLO/PANNER and MOOD's ENV
+    /// modulation).
+    Envelope = 2,
+    /// The unit's needle: TREMOLO/PANNER's L-C-R position (-1..1), ROTARY's
+    /// horn speed (Hz), PITCH FIX's correction (cents).
+    Needle = 3,
+    /// Band levels, linear (SUB MONSTER's five harmonics).
+    Band1 = 4,
+    Band2 = 5,
+    Band3 = 6,
+    Band4 = 7,
+    Band5 = 8,
+    /// The note heard, 0 = C .. 11 = B, -1 for none (PITCH FIX's target).
+    Note = 9,
+}
+
+/// The number of [`FxLive`] values.
+pub const FX_LIVE: usize = 10;
+
+impl FxLive {
+    pub const ALL: [FxLive; FX_LIVE] = [
+        FxLive::LfoPhase,
+        FxLive::LfoPhase2,
+        FxLive::Envelope,
+        FxLive::Needle,
+        FxLive::Band1,
+        FxLive::Band2,
+        FxLive::Band3,
+        FxLive::Band4,
+        FxLive::Band5,
+        FxLive::Note,
+    ];
+
+    pub fn from_index(i: usize) -> Option<Self> {
+        Self::ALL.get(i).copied()
     }
 }
 
@@ -183,6 +241,11 @@ impl FxDevice {
         self.algo.band_gain(band)
     }
 
+    /// See [`FxAlgo::live`].
+    pub fn live(&self, what: FxLive) -> f32 {
+        self.algo.live(what)
+    }
+
     pub fn reset(&mut self) {
         self.algo.reset();
     }
@@ -199,6 +262,7 @@ impl FxDevice {
             self.algo.set_params(&Params::new(spec, &self.values));
             self.primed = true;
         }
+        let _ftz = crate::denormals::ScopedNoDenormals::new();
         let len = left.len().min(right.len());
         let mut start = 0;
         while start < len {

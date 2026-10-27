@@ -55,6 +55,33 @@ enum class GraphKind
     Bands     // a multiband compressor's five bands: threshold offsets 1-5, then the band selected (filled)
 };
 
+/** What a meter shows (Vu, Leds, a fed Lamp, a Graph's live marker): the
+    slot's gain reduction, its input or output level (dBFS, the shared meter
+    ballistics), or one of its device's live values (livedaw-ffi ld_fx_live). */
+enum class Feed
+{
+    Reduction, // gain reduction, dB (>= 0)
+    InL,
+    InR,
+    In, // the louder side
+    OutL,
+    OutR,
+    Out,
+    Needle,   // TREMOLO/PANNER's L-C-R position -1..1, ROTARY's horn speed, PITCH FIX's correction (cents)
+    Envelope, // an envelope follower 0..1
+    Band1,    // band levels, linear (SUB MONSTER)
+    Band2,
+    Band3,
+    Band4,
+    Band5,
+    Note, // the note heard, 0 = C .. 11 = B, -1 none (a Lamp lights for its `choice`)
+    LfoL, // the modulation's position in its cycle 0..1 (an LFO graph's cursor)
+    LfoR
+};
+
+/** Whether a feed is a level in dBFS. */
+inline bool isLevelFeed (Feed f) noexcept { return f >= Feed::InL && f <= Feed::Out; }
+
 enum class Look
 {
     // Knobs
@@ -94,6 +121,7 @@ enum class Look
     VuCream,    // amber arched face in a black housing
     VuRound,    // round window: amber scale over black, glowing rim (colour)
     VuOrange,   // backlit orange face, black housing with a chrome edge
+    PanWindow,  // a narrow window with a needle swinging from its foot between L, C and R (feed Needle)
     // Boxes
     Fill,       // flat fill (colour), optional outline (colour2)
     Bevel,      // raised plate (colour) with a highlight and shadow
@@ -155,6 +183,7 @@ struct Element
 
     // Values: the unit printed beside the number (7-segment displays); 0 none, 1 left, 2 right
     int unitAt = 0;
+    float times = 1.0f;     // Values: show the parameter's value times this (a band's frequency from the tune)
 
     // Meters
     juce::StringArray scale; // Vu labels / LED captions
@@ -166,6 +195,9 @@ struct Element
     float captionY = 0.74f;  // Vu: caption position (fraction of the face height)
     float housing = 0.0f;    // Vu: extra housing below the face (px)
     float dbMin = 0.0f, dbMax = 0.0f; // Vu: a linear dB scale (level = -reduction) instead of the VU law
+    Feed feed = Feed::Reduction; // what the meter shows
+    float ref = 0.0f;            // level meters: the dBFS at the scale's 0 (marks are dB from it)
+    std::vector<juce::uint32> ledColours; // Leds: a colour per LED (else `colour`)
 
     // Display: the parameters it shows; Graph: four per band (freq, gain, q, filter type)
     std::vector<int> params;
@@ -197,6 +229,8 @@ struct Element
     Element& skip() { skipLabelled = true; return *this; }
     Element& turned() { rotate = true; return *this; }
     Element& linearDb (float lo, float hi) { dbMin = lo; dbMax = hi; return *this; }
+    /** The meter shows `f` (levels: `refDb` dBFS reads 0 on its scale). */
+    Element& fed (Feed f, float refDb = 0.0f) { feed = f; ref = refDb; return *this; }
     Element& centred (float degrees) { centre = degrees; return *this; }
     Element& banded (juce::uint32 c) { band = juce::Colour (c); return *this; }
     Element& sideways() { vertical = false; return *this; }
@@ -311,6 +345,34 @@ struct Design
         e.colour = juce::Colour (colour);
         return e;
     }
+    /** A level meter of `n` bar segments, centres from `top` to `bottom` at
+        `cx`, `w` wide, lit by `f` (dBFS, `refDb` reading 0) by the dB scale
+        printed beside it: `scaleDb` at `scaleY` (top down), interpolated. */
+    Element& ladder (Feed f, float refDb, float cx, float w, float top, float bottom, int n, const std::vector<float>& scaleDb,
+                     const std::vector<float>& scaleY, juce::uint32 colour)
+    {
+        std::vector<float> marks;
+        for (int k = 0; k < n; ++k)
+        {
+            const float y = top + (bottom - top) * (float) k / (float) juce::jmax (1, n - 1);
+            float db = scaleDb.back();
+            for (size_t i = 1; i < scaleY.size(); ++i)
+                if (y <= scaleY[i])
+                {
+                    const float t = juce::jlimit (0.0f, 1.0f, (y - scaleY[i - 1]) / (scaleY[i] - scaleY[i - 1]));
+                    db = scaleDb[i - 1] + t * (scaleDb[i] - scaleDb[i - 1]);
+                    break;
+                }
+            marks.push_back (y <= scaleY.front() ? scaleDb.front() : db);
+        }
+        auto& e = add (Type::Leds, cx - w * 0.5f, top, w, bottom - top);
+        e.marks = std::move (marks);
+        e.vertical = true;
+        e.dots = false;
+        e.colour = juce::Colour (colour);
+        e.fed (f, refDb);
+        return e;
+    }
     Element& lamp (float cx, float cy, float d, juce::uint32 colour, int param = -1)
     {
         auto& e = add (Type::Lamp, cx, cy, d, d);
@@ -346,6 +408,10 @@ struct PaintContext
     std::function<float (int)> value;  // a parameter's value
     float reduction = 0.0f;            // gain reduction, dB (>= 0)
     std::function<float (int)> bandGain; // a dynamic EQ band's live gain, dB, signed (empty: unknown)
+    /** The meters' live values (empty: none, the meters rest): levels in dBFS
+        after the meter ballistics (`needle`: with a needle's slower swing),
+        the device's values as they come. */
+    std::function<float (Feed, bool needle)> feed;
     int touched = -1;                  // the parameter last touched (value bubble)
     int page = 0;                      // the panel page shown (tabbed panels)
     bool showValue = false;
@@ -354,6 +420,12 @@ struct PaintContext
 
 /** Paints the design in frame coordinates (the caller sets the transform). */
 void paintDesign (juce::Graphics&, const Design&, const PaintContext&);
+
+/** Whether an element moves with the slot's live values (a meter with a feed,
+    an envelope graph's marker), and the frame area it paints (to repaint
+    just that). */
+bool isLive (const Element&);
+juce::Rectangle<float> liveArea (const Element&);
 
 /** A console value text as a 7-segment display shows it: the number ("5k02 Hz"
     reads "5.02") and its unit ("kHz"; ms and s in capitals). */

@@ -36,8 +36,9 @@ use crate::garbage::Garbage;
 use crate::params::{ext, FxParams, FX_EXT};
 use crate::pdc::{CompRing, MAX_PDC};
 use crate::strip::source_ptr;
+use livedaw_dsp::util::peak_level;
 use livedaw_dsp::util::{all_finite, db_to_gain};
-use livedaw_dsp::wing::fx::{FxContext, FxDevice, FX_BANDS};
+use livedaw_dsp::wing::fx::{FxContext, FxDevice, FxLive, FX_BANDS, FX_LIVE};
 use livedaw_dsp::wing::MAX_FX_PARAMS;
 use livedaw_recorder::{PLAYBACK_SOURCE_BASE, USB_CHANNELS, USB_PLAYER_SOURCE_BASE};
 use std::cell::UnsafeCell;
@@ -126,6 +127,11 @@ pub struct FxRack {
     meter: AtomicF32,
     /// The device's dynamic bands' live gains (dB, signed), for the screen.
     band_gains: [AtomicF32; FX_BANDS],
+    /// The slot's input and output peaks (in L, in R, out L, out R, linear)
+    /// since the screen last took them (`take_io_peaks`).
+    io_peaks: [AtomicF32; 4],
+    /// The device's live values for its panel (`FxLive`).
+    live: [AtomicF32; FX_LIVE],
     faulted: AtomicBool,
     load: AtomicF32,
     /// Set while a strip is running the processor.
@@ -160,6 +166,8 @@ impl Default for FxRack {
             device: AtomicPtr::new(std::ptr::null_mut()),
             meter: AtomicF32::new(0.0),
             band_gains: std::array::from_fn(|_| AtomicF32::new(0.0)),
+            io_peaks: std::array::from_fn(|_| AtomicF32::new(0.0)),
+            live: std::array::from_fn(|_| AtomicF32::new(0.0)),
             faulted: AtomicBool::new(false),
             load: AtomicF32::new(0.0),
             busy: AtomicBool::new(false),
@@ -291,6 +299,7 @@ impl FxRack {
         self.faulted.store(false, Relaxed);
         self.meter.store(0.0);
         self.band_gains.iter().for_each(|g| g.store(0.0));
+        self.live.iter().for_each(|g| g.store(0.0));
         if !old.is_null() {
             // SAFETY: created by Box::into_raw above; now unreachable for new blocks.
             garbage.retire(RetiredDevice(unsafe { Box::from_raw(old) }));
@@ -312,6 +321,19 @@ impl FxRack {
     /// A dynamic band's live gain in dB, signed (TRIPLE DEQ; 0 otherwise).
     pub fn band_gain(&self, band: usize) -> f32 {
         self.band_gains.get(band).map_or(0.0, AtomicF32::load)
+    }
+
+    /// The slot's input and output peaks since the last call (in L, in R,
+    /// out L, out R; linear, 0 while bypassed or empty), for the meters on its
+    /// panel. Taking them resets them: one reader (the screen).
+    pub fn take_io_peaks(&self) -> [f32; 4] {
+        std::array::from_fn(|i| self.io_peaks[i].exchange(0.0))
+    }
+
+    /// A live value of the slot's device for its panel (see `FxLive`); 0
+    /// without a device or for what it doesn't have.
+    pub fn live(&self, what: FxLive) -> f32 {
+        self.live[what as usize].load()
     }
 
     /// Message thread only: the host context of the processor (null if empty).
@@ -434,6 +456,9 @@ impl FxRack {
             for (i, g) in self.band_gains.iter().enumerate() {
                 g.store(dev.band_gain(i));
             }
+            for (g, what) in self.live.iter().zip(FxLive::ALL) {
+                g.store(dev.live(what));
+            }
             channels.iter().all(|c| all_finite(c))
         };
 
@@ -467,6 +492,17 @@ impl FxRack {
                     *y = x + m * (*y - x);
                 }
             }
+        }
+
+        // The panel's meters: what came in (a mono strip's dry[1] held the
+        // device's right channel) and what goes out.
+        let stereo = channels.len() > 1;
+        let in_l = peak_level(&dry[0][..n]);
+        let in_r = if stereo { peak_level(&dry[1][..n]) } else { in_l };
+        let out_l = peak_level(channels[0]);
+        let out_r = if stereo { peak_level(channels[1]) } else { out_l };
+        for (m, v) in self.io_peaks.iter().zip([in_l, in_r, out_l, out_r]) {
+            m.fetch_max(v);
         }
 
         let load = (start.elapsed().as_secs_f64() * sample_rate / n as f64) as f32;

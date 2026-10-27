@@ -314,8 +314,9 @@ like the finish. The COMPACT is black, so it always shows the black finish. It f
   METER SOURCE of SETUP > SURFACE (or a right-click on it): MAIN 1-4, MTX 1-8, PHONES,
   SPEAKERS or SEL CH (the selected strip). The blank key taps the tempo of a delay
   open on EFFECTS or on an INS 1 / INS 2 screen: the time between two taps becomes its
-  TIME. Its LED blinks at that tempo while it can tap, and is lit where the screen
-  gives it another function.
+  TIME (OILCAN's TIME and BBD's DELAY dials turn to that delay time). Its LED blinks
+  at that tempo while it can tap, and is lit where the screen gives it another
+  function.
   - **Surface lock:** hold **HOME** to lock the surface and the touchscreen; the audio
     and the remotes go on. Hold other keys beside the display together with HOME (or
     right-click them just before) and they become the password: only HOME with the
@@ -380,6 +381,13 @@ like the finish. The COMPACT is black, so it always shows the black finish. It f
     strip (PRE/POST) and ON; a device inserted nowhere is shown dimmed. Tapping a slot opens the
     device on its **faceplate**, drawn like the hardware it recreates (a LARC remote
     for the vintage reverbs, a black 1176-style limiter with its VU meter...). The
+    meters on a faceplate show the slot live: VINTAGE ROOM's INPUTS / OUTPUTS,
+    DIMENSION CRS's OUTPUT, TAPE DELAY's VUs (input L / R; 0 VU = -18 dBFS), VINTAGE
+    PLATE's VU, STEREO DELAY's tube, DUAL PITCH's and PSYCHO BASS's outputs, SUB
+    MONSTER's band levels, TREMOLO/PANNER's L-C-R needle, the envelope of PHASER and
+    TREMOLO/PANNER filling their envelope graph, and PITCH FIX's LED over the note it
+    hears. They fall as the screens' meters do and stay dark while the slot is
+    bypassed. The
     device list shows a tile per device: NONE and EXTERNAL (a plugin or an outboard
     insert, see *Outboard inserts*) first, then the
     tabs **FX1-8** (the premium devices, slots 1-8 only), **STD** and **CH** (the EQs and

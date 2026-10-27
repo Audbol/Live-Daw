@@ -69,6 +69,10 @@ pub(super) struct Config<const N: usize> {
     pub seed: u32,
 }
 
+/// The build-up taps' share in the output (see [`Space::early_mix`]): enough
+/// to fill the gap before the tank answers without rising above it.
+const EARLY_MIX: f32 = 0.3;
+
 pub(super) struct Space<const N: usize> {
     sr: f32,
     pub build: BuildUp<N>,
@@ -82,6 +86,10 @@ pub(super) struct Space<const N: usize> {
     pub echo_out: (f32, f32),
     /// Tank output gain (level calibration).
     pub cal: f32,
+    /// How much of the build-up taps (the early sound right after the
+    /// pre-delay) [`Self::tank`] adds to the tank's output, so the reverb
+    /// starts at PRE DLY instead of a line length later.
+    pub early_mix: f32,
     damp: Param,
     a_damp: f32,
     zd: [f32; 2],
@@ -112,6 +120,7 @@ impl<const N: usize> Space<N> {
             echo: None,
             echo_out: (0.0, 0.0),
             cal: 1.0,
+            early_mix: EARLY_MIX,
             damp: Param::default(),
             a_damp: 1.0,
             zd: [0.0; 2],
@@ -242,8 +251,9 @@ impl<const N: usize> Space<N> {
     /// by `cal`).
     #[inline]
     pub fn tank(&mut self, xl: f32, xr: f32) -> (f32, f32) {
-        let (_, t) = self.tank_split(xl, xr);
-        t
+        let ((el, er), (tl, tr)) = self.tank_split(xl, xr);
+        let g = self.early_mix;
+        (tl + g * el, tr + g * er)
     }
 
     /// As [`Self::tank`], also returning the summed build-up taps that feed

@@ -7,6 +7,19 @@ All notable changes to Sidecar are listed here. Versions follow
 
 ### Added
 
+- **The meters on the effects' pages move with the effect** (reverbs, delays,
+  modulation, pitch): VINTAGE ROOM's INPUTS / OUTPUTS ladders, DIMENSION CRS's OUTPUT
+  ladder, TAPE DELAY's two VUs (input L / R), VINTAGE PLATE's VU, STEREO DELAY's level
+  tube, DUAL PITCH's output LEDs, PSYCHO BASS's two VUs (output L / R), SUB MONSTER's
+  band levels in the fader slots, TREMOLO/PANNER's L-C-R needle, the envelope graphs
+  of PHASER and TREMOLO/PANNER (filled to the envelope's level) and PITCH FIX's LED
+  over the note it hears. Levels use the screens' meter ballistics (needles swing a
+  little slower, like a VU); only the meters repaint. The slot reports its input and
+  output peaks and its device's LFO, envelope, needle, band and note values (C ABI 23:
+  `ld_fx_io_peaks`, `ld_fx_live`); an LFO graph shows where the LFO is.
+- Tap tempo also sets OILCAN DELAY's TIME dial and BBD DELAY's DELAY dial (their
+  delay time from the taps); the pitch devices' DELAY no longer takes the tap.
+
 - Multitrack editor: **FILE > Import: COPY TO PROJECT / KEEP IN PLACE / ASK EACH
   TIME** (kept in the app settings). KEEP IN PLACE plays imported WAV, AIFF and FLAC
   files where they are (another drive, a sample library) instead of copying them to
@@ -278,6 +291,14 @@ All notable changes to Sidecar are listed here. Versions follow
 
 ### Changed
 
+- The 480L-style reverbs (HALL, ROOM, CHAMBER, PLATE, CONCERT, AMBIENCE) ring for
+  their DECAY at the console's default SIZE (ROOM rang 1.6 times longer at its default
+  50 m: a 2.5 s DECAY lasted about 4 s). SIZE still scales the decay from there.
+- The reverbs start at PRE DLY: the early build-up (SHAPE / SPREAD) is heard from the
+  pre-delay on instead of only once the tank answers, 20-80 ms later (HALL began about
+  40 ms after PRE DLY, ROOM 75 ms). AMBIENCE's early sound reaches both sides from
+  either input.
+
 - A RATIO picked from a list reads "3:1" everywhere when the ratio is whole (an
   expander's "1:3"; a WING's owner), "2.5:1" or "1.43:1" when it isn't: also on the
   knobs, the FX rack's tiles and a fader strip with an FX parameter, which showed
@@ -485,6 +506,13 @@ All notable changes to Sidecar are listed here. Versions follow
   SPILL (AREA, then one TARGET list: DCA, FX, BUS, MAIN, MTX, AUTOMIX, the selected
   channel).
 ### Fixed
+
+- Turning a LO CUT / HI CUT on STEREO PITCH, DUAL PITCH, STEREO DELAY, ULTRATAP,
+  CHORUS, FLANGER or OILCAN clicked (the filters jumped once per block); they glide
+  smoothly now. GATED REVERB's DENSITY, the pitch devices' DELAY (a bend now, like a
+  tape delay, instead of a smear) and the amps' tone knobs clicked too.
+- The effects no longer slow down on silent tails where nothing else flushes
+  denormal numbers (offline renders, the model response graphs).
 
 - ETERNAL BLISS compressed a steady tone far less than its curve at short releases (at
   its default RELEASE 102 ms, 0.3 dB instead of 2 dB at 3 dB over the threshold): its

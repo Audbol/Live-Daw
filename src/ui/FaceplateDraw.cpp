@@ -1,4 +1,5 @@
 #include "ui/FaceplateDesign.h"
+#include "ui/MeterBallistics.h"
 #include "ui/LookAndFeel.h"
 #include "ui/ModelParams.h"
 
@@ -884,6 +885,21 @@ namespace
         return juce::jlimit (0.0f, 1.0f, (v - 0.1f) / 0.9f * zero);
     }
 
+    /** TREMOLO/PANNER's window: a needle from the foot swinging between L
+        (-1) and R (1). */
+    void drawPanWindow (juce::Graphics& g, const Element& e, float pos)
+    {
+        const Rectangle<float> f (e.x, e.y, e.w, e.h);
+        const Point<float> pivot (f.getCentreX(), f.getBottom() - 6.0f);
+        const float len = f.getHeight() - 16.0f;
+        const float a = juce::jlimit (-1.0f, 1.0f, pos) * std::atan2 (f.getWidth() * 0.42f, len);
+        g.setColour (Colour (0xff1a1a1a).withAlpha (0.35f));
+        g.drawLine ({ pivot, polar (pivot, len, 0.0f) }, 1.0f);
+        g.setColour (e.colour);
+        g.drawLine ({ pivot, polar (pivot, len, a) }, 2.2f);
+        g.fillEllipse (circle (pivot, 4.0f));
+    }
+
     void drawVu (juce::Graphics& g, const Element& e, float reduction)
     {
         const Rectangle<float> f (e.x, e.y, e.w, e.h);
@@ -1021,8 +1037,12 @@ namespace
         g.strokePath (facePath, juce::PathStrokeType (1.0f));
     }
 
-    void drawLeds (juce::Graphics& g, const Element& e, float reduction)
+    /** `value`: the gain reduction (a mark lights from its dB of reduction),
+        a level in dB from the meter's `ref` or a live value (a mark lights
+        from its value). */
+    void drawLeds (juce::Graphics& g, const Element& e, float value)
     {
+        const bool reduction = e.feed == Feed::Reduction;
         const int n = (int) e.marks.size();
         if (n == 0)
             return;
@@ -1031,9 +1051,11 @@ namespace
         {
             const float t = n == 1 ? 0.5f : (float) i / (float) (n - 1);
             const Point<float> c = e.vertical ? Point<float> (e.x + e.w * 0.5f, e.y + e.h * t) : Point<float> (e.x + e.w * t, e.y + e.h * 0.5f);
-            const bool lit = reduction >= e.marks[(size_t) i] && e.marks[(size_t) i] > 0.0f;
+            const float mark = e.marks[(size_t) i];
+            const bool lit = reduction ? value >= mark && mark > 0.0f : value >= mark;
+            const Colour colour = i < (int) e.ledColours.size() ? Colour (e.ledColours[(size_t) i]) : e.colour;
             if (e.dots)
-                drawLed (g, c, d * 0.5f, e.colour, lit);
+                drawLed (g, c, d * 0.5f, colour, lit);
             else
             {
                 // Bar LEDs (a column of slots).
@@ -1041,11 +1063,11 @@ namespace
                 const auto bar = Rectangle<float> (bw, bh).withCentre (c);
                 g.setColour (Colour (0xff050505));
                 g.fillRect (bar.expanded (1.5f));
-                g.setColour (lit ? e.colour : e.colour.withMultipliedBrightness (0.22f).withMultipliedSaturation (0.6f));
+                g.setColour (lit ? colour : colour.withMultipliedBrightness (0.22f).withMultipliedSaturation (0.6f));
                 g.fillRect (bar);
                 if (lit)
                 {
-                    g.setColour (e.colour.withAlpha (0.25f));
+                    g.setColour (colour.withAlpha (0.25f));
                     g.fillRect (bar.expanded (3.0f));
                 }
             }
@@ -1208,7 +1230,8 @@ namespace
         }
         g.setColour (e.colour2);
         g.fillRect (r);
-        auto text = consoleText (p, v);
+        // A value derived from the parameter (SUB MONSTER's band frequencies from the tune).
+        auto text = e.times != 1.0f ? juce::String (v * e.times, 1) + (p.unit.isNotEmpty() ? " " + p.unit : juce::String()) : consoleText (p, v);
         if (e.look == Look::Segment)
         {
             const auto [number, unit] = segmentText (text);
@@ -1650,6 +1673,18 @@ namespace
         auto fill = env;
         fill.closeSubPath();
         g.fillPath (fill);
+        if (in.ctx.feed)
+        {
+            // The envelope follower now: the shape filled up to its level.
+            const float level = juce::jlimit (0.0f, 1.0f, in.ctx.feed (Feed::Envelope, false));
+            g.saveState();
+            g.reduceClipRegion (fill);
+            g.setColour (green.withAlpha (0.55f));
+            g.fillRect (body.withTop (body.getBottom() - body.getHeight() * level));
+            g.restoreState();
+            g.setColour (juce::Colours::white.withAlpha (0.8f));
+            g.drawHorizontalLine (juce::roundToInt (body.getBottom() - body.getHeight() * level), body.getX(), body.getRight());
+        }
         g.setColour (green);
         g.strokePath (env, juce::PathStrokeType (3.0f));
     }
@@ -1770,6 +1805,16 @@ namespace
             }
             g.setColour (lane == 0 ? kCurve : kCurve2);
             g.strokePath (p, juce::PathStrokeType (lane == 0 ? 3.0f : 2.0f));
+            if (in.ctx.feed)
+            {
+                // Where the LFO is now (in the first of the two cycles drawn).
+                // The lane draws phase 2t (+ the offset) at t along the width.
+                const float ph = in.ctx.feed (lane == 0 ? Feed::LfoL : Feed::LfoR, false);
+                const float u = ph - (lane == 1 ? phaseOffset : 0.0f);
+                const float x = body.getX() + body.getWidth() * 0.5f * (u - std::floor (u));
+                const float y = body.getCentreY() - lfoShape (ph, choice, skew) * depth * body.getHeight() * 0.45f;
+                g.fillEllipse (circle ({ x, y }, lane == 0 ? 6.0f : 5.0f));
+            }
         }
         label (g, "L", { body.getRight() - 40.0f, body.getY(), 16.0f, 14.0f }, juce::Justification::centred, kCurve);
         label (g, "R", { body.getRight() - 22.0f, body.getY(), 16.0f, 14.0f }, juce::Justification::centred, kCurve2);
@@ -1991,6 +2036,44 @@ namespace
         g.drawRoundedRectangle (b, 5.0f, 1.5f);
         g.drawText (text, b, juce::Justification::centred);
     }
+    /** Generously, where an element can paint (its scale, labels, shadow,
+        housing); empty when unknown (paths). */
+    Rectangle<float> paintBounds (const Element& e)
+    {
+        const Rectangle<float> r (e.x, e.y, e.w, e.h);
+        switch (e.type)
+        {
+            case Type::Knob: return Rectangle<float> (e.w * 3.6f + 80.0f, e.w * 3.6f + 80.0f).withCentre ({ e.x, e.y });
+            case Type::Toggle:
+            case Type::Lamp:
+            case Type::Screw: return Rectangle<float> (e.w * 4.0f + 20.0f, e.w * 4.0f + 20.0f).withCentre ({ e.x, e.y });
+            case Type::Vu: return r.expanded (50.0f).withTrimmedBottom (-(e.housing + e.h));
+            case Type::Leds: return r.expanded (80.0f);
+            case Type::Key:
+            case Type::Fader:
+            case Type::Text:
+            case Type::Box:
+            case Type::Display:
+            case Type::Value:
+            case Type::Graph: return r.expanded (24.0f + e.size);
+            case Type::Path: break;
+        }
+        return {};
+    }
+
+    /** A meter's reading for its feed: the gain reduction, a level in dB
+        from the meter's `ref` (a Vu reads it as the reduction it would show,
+        so 0 sits at `ref` and the needle rises with the level), or the live
+        value itself. At rest without live values. */
+    float meterValue (const Element& e, const PaintContext& ctx, bool vu)
+    {
+        if (e.feed == Feed::Reduction)
+            return ctx.reduction;
+        if (! isLevelFeed (e.feed))
+            return ctx.feed ? ctx.feed (e.feed, vu) : 0.0f;
+        const float db = ctx.feed ? ctx.feed (e.feed, vu) : meters::kFloorDb;
+        return vu ? e.ref - db : db - e.ref;
+    }
 } // namespace
 
 //==============================================================================
@@ -2119,6 +2202,11 @@ void paintDesign (juce::Graphics& g, const Design& d, const PaintContext& ctx)
     {
         if (e.page >= 0 && e.page != ctx.page)
             continue;
+        if (e.param >= 0 && e.param == ctx.touched && bubbleAt == nullptr && e.type != Type::Value && paramOf (e) != nullptr)
+            bubbleAt = &e;
+        // A meter repaints only its own area: skip what lies outside it.
+        if (const auto area = paintBounds (e); ! area.isEmpty() && ! g.clipRegionIntersects (area.getSmallestIntegerContainer()))
+            continue;
         const auto* p = paramOf (e);
         const float v = p != nullptr ? ctx.value (e.param) : 0.0f;
         switch (e.type)
@@ -2128,10 +2216,20 @@ void paintDesign (juce::Graphics& g, const Design& d, const PaintContext& ctx)
             case Type::Key:
                 drawKey (g, e, e.look == Look::TabKey ? e.choice == ctx.page : (p != nullptr ? elementOn (e, *p, v) : e.fixed > 0.5f));
                 break;
-            case Type::Lamp: drawLed (g, { e.x, e.y }, e.w * 0.5f, e.colour, p != nullptr ? elementOn (e, *p, v) : e.fixed > 0.5f); break;
+            case Type::Lamp:
+                if (e.feed == Feed::Note)
+                    drawLed (g, { e.x, e.y }, e.w * 0.5f, e.colour, ctx.feed && juce::roundToInt (ctx.feed (Feed::Note, false)) == e.choice);
+                else
+                    drawLed (g, { e.x, e.y }, e.w * 0.5f, e.colour, p != nullptr ? elementOn (e, *p, v) : e.fixed > 0.5f);
+                break;
             case Type::Fader: drawFader (g, e, p != nullptr ? controlPosition (*p, v) : e.fixed); break;
-            case Type::Vu: drawVu (g, e, ctx.reduction); break;
-            case Type::Leds: drawLeds (g, e, ctx.reduction); break;
+            case Type::Vu:
+                if (e.look == Look::PanWindow)
+                    drawPanWindow (g, e, ctx.feed ? ctx.feed (e.feed, true) : 0.0f);
+                else
+                    drawVu (g, e, meterValue (e, ctx, true));
+                break;
+            case Type::Leds: drawLeds (g, e, meterValue (e, ctx, false)); break;
             case Type::Text: drawText (g, e); break;
             case Type::Box: drawBox (g, e); break;
             case Type::Screw: drawScrew (g, { e.x, e.y }, e.w * 0.5f, d.panel); break;
@@ -2159,8 +2257,6 @@ void paintDesign (juce::Graphics& g, const Design& d, const PaintContext& ctx)
                 break;
             }
         }
-        if (p != nullptr && e.param == ctx.touched && bubbleAt == nullptr && e.type != Type::Value)
-            bubbleAt = &e;
     }
     if (ctx.thumbnail && d.badge.isNotEmpty())
     {
@@ -2194,6 +2290,29 @@ void paintDesign (juce::Graphics& g, const Design& d, const PaintContext& ctx)
         const auto& p = ctx.spec->params[(size_t) bubbleAt->param];
         drawBubble (g, hitArea (*bubbleAt), consoleText (p, ctx.value (bubbleAt->param)));
     }
+}
+
+bool isLive (const Element& e)
+{
+    if (e.type == Type::Vu || e.type == Type::Leds)
+        return e.feed != Feed::Reduction;
+    if (e.type == Type::Lamp)
+        return e.feed == Feed::Note;
+    if (e.type == Type::Graph)
+        return (e.graph == GraphKind::Decay && e.choice == 3) || e.graph == GraphKind::Lfo;
+    return false;
+}
+
+juce::Rectangle<float> liveArea (const Element& e)
+{
+    const Rectangle<float> r (e.x, e.y, e.w, e.h);
+    if (e.type == Type::Vu)
+        return r.expanded (8.0f); // the face and needle (the housing doesn't move)
+    if (e.type == Type::Leds)
+        return r.expanded (e.vertical ? e.w : e.h);
+    if (e.type == Type::Lamp)
+        return Rectangle<float> (e.w * 3.0f, e.w * 3.0f).withCentre ({ e.x, e.y });
+    return r.expanded (2.0f);
 }
 
 } // namespace livedaw::ui::fp

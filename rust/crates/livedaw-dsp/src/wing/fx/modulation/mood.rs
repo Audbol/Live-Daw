@@ -2,7 +2,7 @@
 
 use super::shared::Morph;
 use crate::wing::fx::blocks::{coef, fast_tanh, Envelope, Lfo, Smoothed, Wave};
-use crate::wing::fx::{FxAlgo, FxContext};
+use crate::wing::fx::{FxAlgo, FxContext, FxLive};
 use crate::wing::Params;
 use std::f32::consts::PI;
 
@@ -214,6 +214,15 @@ impl FxAlgo for Mood {
                 }
                 *x += (out * post - *x) * mix;
             }
+        }
+    }
+
+    fn live(&self, what: FxLive) -> f32 {
+        match what {
+            FxLive::LfoPhase => self.lfo.phase,
+            FxLive::LfoPhase2 => (self.lfo.phase + self.offset.value).rem_euclid(1.0),
+            FxLive::Envelope => (2.0 * self.env.env).clamp(0.0, 1.0),
+            _ => 0.0,
         }
     }
 

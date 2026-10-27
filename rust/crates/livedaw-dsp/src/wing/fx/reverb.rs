@@ -166,8 +166,9 @@ mod tests {
             let f: Vec<f32> = out.iter().map(|&x| bp.tick(x, 0)).collect();
             rt60(&f, 48_000.0)
         };
-        let flat = band_rt("ROOM", &[("dcy", 2.0)], 150.0, 300.0);
-        let bass = band_rt("ROOM", &[("dcy", 2.0), ("mult", 2.0)], 150.0, 300.0);
+        // (The pre-echo loop, FEED, off: its repeats don't follow BASS MULT.)
+        let flat = band_rt("ROOM", &[("dcy", 2.0), ("efl", 0.0), ("efr", 0.0)], 150.0, 300.0);
+        let bass = band_rt("ROOM", &[("dcy", 2.0), ("mult", 2.0), ("efl", 0.0), ("efr", 0.0)], 150.0, 300.0);
         assert!(bass > 1.5 * flat, "BASS MULT 2: {flat} -> {bass} s");
         let small = band_rt("HALL", &[("size", 30.0)], 700.0, 1400.0);
         let big = band_rt("HALL", &[("size", 100.0)], 700.0, 1400.0);

@@ -1,5 +1,7 @@
 #pragma once
 
+#include <array>
+
 #include "engine/Parameters.h"
 #include "engine/PluginChain.h"
 
@@ -117,6 +119,16 @@ public:
     float getMeter (int slot) const noexcept { return ld::ld_fx_meter (engine, slot); }
     /** Live gain of a dynamic band of the slot's device (dB, signed). */
     float getBandGain (int slot, int band) const noexcept { return ld::ld_fx_band_gain (engine, slot, band); }
+    /** The slot's input and output peaks (linear: in L, in R, out L, out R) since the
+        last call; taking them resets them (one reader: the slot's panel). */
+    std::array<float, 4> takeIoPeaks (int slot) const noexcept
+    {
+        std::array<float, 4> p {};
+        ld::ld_fx_io_peaks (engine, slot, p.data());
+        return p;
+    }
+    /** A live value of the slot's device (ld_fx_live: LFO, envelope, needle, bands, note). */
+    float getLive (int slot, int what) const noexcept { return ld::ld_fx_live (engine, slot, what); }
     bool isFaulted (int slot) const noexcept { return ld::ld_fx_state (engine, slot, 1); }
     bool isDoubleAssigned (int slot) const noexcept { return ld::ld_fx_state (engine, slot, 2); }
     /** Clears the slot's fault and double assignment, and its chain's faulted plugins. */

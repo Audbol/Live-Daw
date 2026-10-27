@@ -2213,8 +2213,7 @@ void HomePage::blankKeyPressed()
         return;
     const int model = ctx.engine.getFx().getModel (slot);
     const int param = TapTempo::timeParam (model);
-    const auto& p = models::model (models::Fx, model).params[(size_t) param];
-    ctx.engine.getFx().params (slot).values[param].store (juce::jlimit (p.min, p.max, *interval));
+    ctx.engine.getFx().params (slot).values[param].store (TapTempo::valueForMs (model, param, *interval));
 }
 
 std::optional<bool> HomePage::blankKeyBlink (double nowMs) const
@@ -2222,7 +2221,9 @@ std::optional<bool> HomePage::blankKeyBlink (double nowMs) const
     const int slot = tapSlot();
     if (slot < 0)
         return std::nullopt;
-    return tapTempo.ledLit (nowMs, ctx.engine.getFx().params (slot).values[TapTempo::timeParam (ctx.engine.getFx().getModel (slot))].load());
+    const int model = ctx.engine.getFx().getModel (slot);
+    const int param = TapTempo::timeParam (model);
+    return tapTempo.ledLit (nowMs, TapTempo::msOf (model, param, ctx.engine.getFx().params (slot).values[param].load()));
 }
 
 bool HomePage::isAvailable (HomeTab t, const Strip* s) const

@@ -290,6 +290,9 @@ void Faceplate::bind (models::Table t, int model, std::atomic<float>* v, std::fu
     values = v;
     meterFn = std::move (meter);
     bandFn = std::move (bandGain);
+    peaksFn = {};
+    liveFn = {};
+    liveElements.clear();
     shownBands.fill (0.0f);
     spec = &models::model (t, model);
     design = fp::findDesign (t, spec->token);
@@ -330,6 +333,99 @@ void Faceplate::setPage (int p)
     repaint();
 }
 
+void Faceplate::setLiveFeeds (std::function<std::array<float, 4>()> ioPeaks, std::function<float (int)> live)
+{
+    peaksFn = std::move (ioPeaks);
+    liveFn = std::move (live);
+    liveElements.clear();
+    if (design != nullptr && (peaksFn || liveFn))
+        for (size_t i = 0; i < design->elements.size(); ++i)
+            if (fp::isLive (design->elements[i]))
+                liveElements.push_back ((int) i);
+    liveShown.assign (liveElements.size(), std::numeric_limits<float>::quiet_NaN());
+    for (auto& b : levels)
+        b.reset();
+    needleDb.fill (meters::kFloorDb);
+    liveValues.fill (0.0f);
+    liveValues[9] = -1.0f; // no note heard
+    lastLiveMs = juce::Time::getMillisecondCounterHiRes();
+    // Meters move at the screen's pace; panels without them poll their controls.
+    startTimerHz (liveElements.empty() ? 15 : 30);
+    repaint();
+}
+
+float Faceplate::feedValue (int feed, bool needle) const
+{
+    using fp::Feed;
+    const auto level = [&] (size_t i) { return needle ? needleDb[i] : levels[i].levelDb; };
+    // The device's values come in ld_fx_live's order: LFO L, LFO R, envelope,
+    // needle, bands 1-5, note.
+    switch ((Feed) feed)
+    {
+        case Feed::Reduction: return juce::jlimit (0.0f, 40.0f, -shownMeter);
+        case Feed::InL: return level (0);
+        case Feed::InR: return level (1);
+        case Feed::In: return juce::jmax (level (0), level (1));
+        case Feed::OutL: return level (2);
+        case Feed::OutR: return level (3);
+        case Feed::Out: return juce::jmax (level (2), level (3));
+        case Feed::LfoL: return liveValues[0];
+        case Feed::LfoR: return liveValues[1];
+        case Feed::Envelope: return liveValues[2];
+        case Feed::Needle: return liveValues[3];
+        case Feed::Band1: return liveValues[4];
+        case Feed::Band2: return liveValues[5];
+        case Feed::Band3: return liveValues[6];
+        case Feed::Band4: return liveValues[7];
+        case Feed::Band5: return liveValues[8];
+        case Feed::Note: return liveValues[9];
+    }
+    return 0.0f;
+}
+
+void Faceplate::updateLiveMeters()
+{
+    // Hidden (another page shows the slot), it leaves the peaks to that one.
+    if (liveElements.empty() || design == nullptr || ! isShowing())
+        return;
+    const double now = juce::Time::getMillisecondCounterHiRes();
+    const float dt = (float) juce::jlimit (0.0, 0.5, (now - lastLiveMs) * 0.001);
+    lastLiveMs = now;
+    if (peaksFn)
+    {
+        const auto peaks = peaksFn();
+        for (size_t i = 0; i < 4; ++i)
+        {
+            levels[i].advance (peaks[i], dt);
+            // A needle swings: it follows the level with ~300 ms of inertia (VU).
+            const float target = levels[i].levelDb;
+            needleDb[i] += (target - needleDb[i]) * (1.0f - std::exp (-dt / 0.3f));
+            needleDb[i] = juce::jmax (needleDb[i], meters::kFloorDb);
+        }
+    }
+    if (liveFn)
+        for (int k = 0; k < 10; ++k)
+            liveValues[(size_t) k] = liveFn (k);
+    // Repaint the meters whose reading moved, and only them.
+    for (size_t k = 0; k < liveElements.size(); ++k)
+    {
+        const auto& e = design->elements[(size_t) liveElements[k]];
+        if (e.page >= 0 && e.page != page)
+            continue;
+        float shownNow = 0.0f;
+        if (e.type == fp::Type::Graph)
+            shownNow = e.graph == fp::GraphKind::Lfo ? feedValue ((int) fp::Feed::LfoL, false) * 400.0f : feedValue ((int) fp::Feed::Envelope, false) * 200.0f;
+        else if (fp::isLevelFeed (e.feed))
+            shownNow = std::round (feedValue ((int) e.feed, e.type == fp::Type::Vu) * 2.0f); // half a dB
+        else
+            shownNow = std::round (feedValue ((int) e.feed, e.type == fp::Type::Vu) * 200.0f);
+        if (shownNow == liveShown[k])
+            continue;
+        liveShown[k] = shownNow;
+        repaint (fp::liveArea (e).transformedBy (toScreen).getSmallestIntegerContainer());
+    }
+}
+
 void Faceplate::unbind()
 {
     spec = nullptr;
@@ -337,6 +433,9 @@ void Faceplate::unbind()
     values = nullptr;
     meterFn = {};
     bandFn = {};
+    peaksFn = {};
+    liveFn = {};
+    liveElements.clear();
     controls.clear();
     repaint();
 }
@@ -409,6 +508,7 @@ void Faceplate::timerCallback()
     }
     if (changed)
         repaint();
+    updateLiveMeters();
 }
 
 void Faceplate::resized()
@@ -951,6 +1051,8 @@ void Faceplate::paint (juce::Graphics& g)
         ctx.reduction = juce::jlimit (0.0f, 40.0f, -shownMeter);
         if (bandFn)
             ctx.bandGain = [this] (int b) { return b >= 0 && b < (int) shownBands.size() ? shownBands[(size_t) b] : 0.0f; };
+        if (! liveElements.empty())
+            ctx.feed = [this] (fp::Feed f, bool needle) { return feedValue ((int) f, needle); };
         ctx.touched = lastTouched;
         ctx.showValue = bubbleShown;
         ctx.page = page;

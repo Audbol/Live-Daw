@@ -45,6 +45,9 @@ const OS_POWER: f32 = 2.0;
 /// Samples between tone-control coefficient updates.
 const CTRL: usize = 32;
 const SMOOTH_MS: f32 = 20.0;
+/// The tone knobs glide a little slower: their filters are redesigned per
+/// control step, and small steps keep a turned knob from crackling.
+const TONE_SMOOTH_MS: f32 = 60.0;
 /// Level of the anti-denormal signal (about -300 dBFS at the output). The
 /// engine flushes denormals on the audio thread; this keeps the amps fast
 /// where nothing does (tests, offline rendering).
@@ -498,7 +501,7 @@ impl Amp {
             sag: Smoothed::new(0.0, SMOOTH_MS, sr),
             out: Smoothed::new(1.0, SMOOTH_MS, sr),
             cab_mix: Smoothed::new(1.0, SMOOTH_MS, sr),
-            knobs: [Smoothed::new(0.5, SMOOTH_MS, cr); KNOBS],
+            knobs: [Smoothed::new(0.5, TONE_SMOOTH_MS, cr); KNOBS],
             ctrl: 0,
             guard: DENORMAL_GUARD,
         };

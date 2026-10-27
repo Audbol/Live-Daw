@@ -2,7 +2,7 @@
 
 use super::shared::{advance, loop_limit, tri_sine_square, Morph};
 use crate::wing::fx::blocks::{coef, Envelope, Smoothed};
-use crate::wing::fx::{FxAlgo, FxContext};
+use crate::wing::fx::{FxAlgo, FxContext, FxLive};
 use crate::wing::Params;
 use std::f32::consts::PI;
 
@@ -152,6 +152,15 @@ impl FxAlgo for Phaser {
                 self.last[ch] = y;
                 *x += (y * wet_g - *x) * mix;
             }
+        }
+    }
+
+    fn live(&self, what: FxLive) -> f32 {
+        match what {
+            FxLive::LfoPhase => self.phase,
+            FxLive::LfoPhase2 => (self.phase + self.offset.value).rem_euclid(1.0),
+            FxLive::Envelope => self.env.env.clamp(0.0, 1.0),
+            _ => 0.0,
         }
     }
 

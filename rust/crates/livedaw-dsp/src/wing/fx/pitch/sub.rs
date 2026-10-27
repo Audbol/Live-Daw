@@ -2,7 +2,7 @@
 //! bass (P-BASS).
 
 use super::super::blocks::{db_to_gain, fast_tanh, Biquad, BiquadCoeffs, DcBlock, Envelope, Smoothed};
-use super::super::{FxAlgo, FxContext};
+use super::super::{FxAlgo, FxContext, FxLive};
 use super::{add_mix, chain, fader_gain, SMOOTH_MS};
 use crate::wing::Params;
 
@@ -244,6 +244,18 @@ impl FxAlgo for SubMonster {
             let (dry, wet) = (self.dry.tick(), self.wet.tick());
             *l = *l * dry + sub * wet;
             *r = *r * dry + sub * wet;
+        }
+    }
+
+    fn live(&self, what: FxLive) -> f32 {
+        let band = |k: usize| self.bands[k].env.env * self.bands[k].level.value;
+        match what {
+            FxLive::Band1 => band(0),
+            FxLive::Band2 => band(1),
+            FxLive::Band3 => band(2),
+            FxLive::Band4 => band(3),
+            FxLive::Band5 => band(4),
+            _ => 0.0,
         }
     }
 

@@ -3044,6 +3044,7 @@ public:
                 face->bind (
                     models::Fx, model, fx.params (slot).values, [&fx, slot] { return fx.getMeter (slot); },
                     [&fx, slot] (int band) { return fx.getBandGain (slot, band); });
+                face->setLiveFeeds ([&fx, slot] { return fx.takeIoPeaks (slot); }, [&fx, slot] (int what) { return fx.getLive (slot, what); });
                 face->onTouched = [this] (int param)
                 {
                     if (param / 6 != knobPage)
