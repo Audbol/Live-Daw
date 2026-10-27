@@ -128,7 +128,7 @@ public:
             expectEquals (ratioText ("DEQ", 0), juce::String ("1.2:1"));
         }
 
-        beginTest ("GRAPHIC EQ: the faders (with TRIM) and the curve are on pages of their own");
+        beginTest ("GRAPHIC EQ: the faders (with TRIM) and the curve are on pages of their own, TRUE CURVE on both");
         {
             const auto* geq = ui::fp::findDesign (models::Fx, "GEQ");
             expect (geq != nullptr);
@@ -152,7 +152,7 @@ public:
                 expectEquals (faders, 32); // 31 bands and TRIM
                 expect (faderPages == std::set<int> { 0 }, "the faders aren't all on the first page");
                 expect (graphPages == std::set<int> { 1 }, "the curve isn't on a page of its own");
-                expect (typePages == std::set<int> { 1 });
+                expect (typePages == std::set<int> { -1 }, "TRUE CURVE isn't on both pages"); // Fig. 81: top right of the faders
                 ui::Faceplate face;
                 std::vector<std::atomic<float>> values (spec.params.size());
                 for (size_t i = 0; i < spec.params.size(); ++i)
@@ -165,28 +165,109 @@ public:
             }
         }
 
-        beginTest ("GATED, REVERSE and DEL/REV have panels of their own, with their graphs");
+        beginTest ("GATED, REVERSE and DEL/REV have panels of their own (Fig. 130-132), not the HALL's remote");
         {
-            const std::pair<const char*, ui::fp::GraphKind> reverbs[] = { { "GATED", ui::fp::GraphKind::Decay },
-                                                                         { "REVERSE", ui::fp::GraphKind::Decay },
-                                                                         { "DEL/REV", ui::fp::GraphKind::Taps } };
             const auto* hall = ui::fp::findDesign (models::Fx, "HALL");
-            for (auto [token, graph] : reverbs)
+            for (auto* token : { "GATED", "REVERSE", "DEL/REV" })
             {
                 const auto* d = ui::fp::findDesign (models::Fx, token);
                 expect (d != nullptr, token);
                 if (d == nullptr)
                     continue;
-                bool hasGraph = false, display = false;
+                bool display = false, segments = false;
                 for (const auto& e : d->elements)
                 {
-                    hasGraph = hasGraph || (e.type == ui::fp::Type::Graph && e.graph == graph && ! e.params.empty());
                     display = display || e.type == ui::fp::Type::Display; // the HALL remote's dot-matrix display
+                    segments = segments || (e.type == ui::fp::Type::Value && e.look == ui::fp::Look::Segment);
                 }
-                expect (hasGraph, juce::String (token) + " lost its graph");
                 expect (! display, juce::String (token) + " still uses the HALL's remote");
+                expect (segments, juce::String (token) + " lost its 7-segment display");
                 expect (hall == nullptr || d->panel != hall->panel, token);
             }
+        }
+
+        beginTest ("A 7-segment display splits the console's value text into number and unit");
+        {
+            const auto split = [] (const char* text)
+            {
+                const auto [number, unit] = ui::fp::segmentText (text);
+                return number + "|" + unit;
+            };
+            expectEquals (split ("5k02 Hz"), juce::String ("5.02|kHz"));
+            expectEquals (split ("183 Hz"), juce::String ("183|Hz"));
+            expectEquals (split ("1.14 s"), juce::String ("1.14|S"));
+            expectEquals (split ("71 ms"), juce::String ("71|MS"));
+            expectEquals (split ("-6.0 dB"), juce::String ("-6.0|dB"));
+            expectEquals (split ("30%"), juce::String ("30|%"));
+            expectEquals (split ("32"), juce::String ("32|"));
+        }
+
+        beginTest ("A ladder LED lights for the band around its value and sets it");
+        {
+            // VINTAGE REVERB: the DECAY LEDs pick the decay.
+            const auto* d = ui::fp::findDesign (models::Fx, "V-REV");
+            const auto& spec = models::model (models::Fx, models::findModel (models::Fx, "V-REV"));
+            expect (d != nullptr);
+            if (d != nullptr)
+            {
+                const int decay = spec.find ("dcy");
+                const auto& p = spec.params[(size_t) decay];
+                std::vector<const ui::fp::Element*> leds;
+                for (const auto& e : d->elements)
+                    if (e.type == ui::fp::Type::Lamp && e.param == decay)
+                        leds.push_back (&e);
+                expectEquals ((int) leds.size(), 16);
+                for (float v : { 0.4f, 1.47f, 2.6f, 4.5f })
+                {
+                    int lit = 0;
+                    for (auto* e : leds)
+                        lit += ui::fp::elementOn (*e, p, v) ? 1 : 0;
+                    expectEquals (lit, 1, "one LED lights for " + juce::String (v));
+                }
+                for (auto* e : leds)
+                    expect (ui::fp::elementOn (*e, p, ui::fp::clickValue (*e, p, 1.0f)), "a click sets the LED's own value");
+            }
+        }
+
+        beginTest ("A rack tile's ring shows the control the console shows");
+        {
+            const auto shown = [] (const char* token)
+            {
+                const auto& m = models::model (models::Fx, models::findModel (models::Fx, token));
+                const int i = ui::fp::rackTileParam (m);
+                return i >= 0 ? m.params[(size_t) i].label : juce::String();
+            };
+            // As on a WING's EFFECTS screen (3.1).
+            expectEquals (shown ("REVERSE"), juce::String ("RISE"));
+            expectEquals (shown ("DEL/REV"), juce::String ("TIME"));
+            expectEquals (shown ("SPKMAN"), juce::String ("TILT F"));
+            expectEquals (shown ("LIMITER"), juce::String ("SQUEEZE"));
+            expectEquals (shown ("ROTARY"), juce::String ("SPD CTL"));
+            expectEquals (shown ("TAPE"), juce::String ("DRIVE"));
+            expectEquals (shown ("PCORR"), juce::String ("AMOUNT"));
+            expectEquals (shown ("SHIMMER"), juce::String ("DECAY"));
+            expectEquals (shown ("TAPE-DL"), juce::String ("TIME"));
+            expectEquals (shown ("P-BASS"), juce::String ("INTENSITY"));
+            expectEquals (shown ("SUB"), juce::String ("OCTAVE 1"));
+            expectEquals (shown ("UKROCK"), juce::String ("GAIN"));
+        }
+
+        beginTest ("C5-COMBINATOR: touching a band selects it and shows its controls");
+        {
+            const auto& spec = models::model (models::Fx, models::findModel (models::Fx, "C5-CMB"));
+            std::vector<std::atomic<float>> values (spec.params.size());
+            for (size_t i = 0; i < spec.params.size(); ++i)
+                values[i] = spec.params[i].defaultValue;
+            const int band = spec.find ("bandsel");
+            values[(size_t) band] = 4.0f; // band 4
+            ui::Faceplate face;
+            face.setBounds (0, 0, 1156, 479);
+            face.bind (models::Fx, spec.index, values.data(), [] { return 0.0f; });
+            expectEquals (face.getNumPages(), 5);
+            expectEquals (face.getPage(), 3, "the page follows BAND SELECT");
+            expectEquals (face.pageFromParameter(), 3);
+            values[(size_t) band] = 2.0f;
+            expectEquals (face.pageFromParameter(), 1);
         }
     }
 

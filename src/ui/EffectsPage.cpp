@@ -2,6 +2,7 @@
 #include "engine/Models.h"
 #include "engine/PluginHost.h"
 #include "ui/Faceplate.h"
+#include "ui/FaceplateDesign.h"
 #include "ui/HomeWidgets.h"
 #include "ui/Pages.h"
 #include "ui/WingWidgets.h"
@@ -29,20 +30,6 @@ namespace
                     return { s.get(), true };
             }
         return {};
-    }
-
-    /** The control a device's rack tile shows on its ring (DECAY for reverbs, TIME for delays...). */
-    int keyParam (const models::Model& m)
-    {
-        static const char* const ids[] = { "dcy", "time", "dly", "spd", "fbase", "semi", "semi1", "oct1", "int", "gin", "hrm",
-                                           "wid", "body", "drv", "gain", "drive", "vol", "pre", "g", "TRIM", "thr", "1-thr", "hpf", "mix" };
-        for (auto* id : ids)
-            if (const int i = m.find (id); i >= 0 && m.params[(size_t) i].isContinuous())
-                return i;
-        for (size_t i = 0; i < m.params.size(); ++i)
-            if (m.params[i].isContinuous())
-                return (int) i;
-        return -1;
     }
 
     /** The rack's scratched dark metal [3.1]: grain, fine light scratches and
@@ -272,7 +259,7 @@ public:
         // Ring and value: the device's key control (a plugin's: MIX), the
         // ring 48 px at 90, 80, the caption and value from 151.
         knobArea = at (90.0f, 80.0f, 48.0f, 48.0f);
-        ringParam = device ? keyParam (spec) : -1;
+        ringParam = device ? fp::rackTileParam (spec) : -1;
         float mix = juce::jlimit (0.0f, 1.0f, params.mix.load() / 100.0f);
         juce::String ringLabel ("MIX"), ringValue (juce::String (juce::roundToInt (params.mix.load())) + " %");
         if (ringParam >= 0)
@@ -395,7 +382,7 @@ private:
         if (model > ld::kFxExt)
         {
             const auto& spec = models::model (models::Fx, model);
-            if (const int key = keyParam (spec); key >= 0 && key < (int) spec.params.size())
+            if (const int key = fp::rackTileParam (spec); key >= 0 && key < (int) spec.params.size())
                 sig << '|' << params.values[key].load();
         }
         const auto user = findUser (ctx.engine, slot);
@@ -448,9 +435,8 @@ public:
         for (juce::Component* comp : { (juce::Component*) &backKey, (juce::Component*) &deviceField, (juce::Component*) &onKey,
                                        (juce::Component*) &mix, (juce::Component*) &face, (juce::Component*) &openKey, (juce::Component*) &pluginKey })
             addAndMakeVisible (comp);
-        for (juce::Component* comp : { (juce::Component*) &sourceKeys, (juce::Component*) &modeKeys, (juce::Component*) &trimBox, (juce::Component*) &latencyBox })
+        for (juce::Component* comp : { (juce::Component*) &sourceKeys, (juce::Component*) &trimBox, (juce::Component*) &latencyBox })
             addChildComponent (comp);
-        modeKeys.vertical = true;
         startTimerHz (6);
     }
 
@@ -603,6 +589,13 @@ public:
             ctx.showFxSendOutputs (slot); // [Fig. 169] SEND opens ROUTING > OUTPUTS
         else if (fx.isOutboard (slot) && returnArea.contains (e.getPosition()))
             chooseReturn();
+        else if (fx.isOutboard (slot) && modeArea.contains (e.getPosition()))
+        {
+            // FX MODE: a row per mode.
+            const int row = juce::jlimit (0, 2, (e.y - modeArea.getY()) * 3 / juce::jmax (1, modeArea.getHeight()));
+            fx.params (slot).values[ld::ext::kMode] = (float) row;
+            repaint (modeArea);
+        }
     }
 
 private:
@@ -623,7 +616,6 @@ private:
         pluginKey.setVisible (shownModel == ld::kFxExt && ! shownOutboard);
         openKey.setEnabled (fx.hasPlugin (slot));
         sourceKeys.setVisible (shownModel == ld::kFxExt);
-        modeKeys.setVisible (shownOutboard);
         trimBox.setVisible (shownOutboard);
         latencyBox.setVisible (shownOutboard);
         layoutOutboard();
@@ -649,21 +641,26 @@ private:
     // outputs patched to the slot's FX SEND, with TRIM), FX MODE, RETURN (the
     // source the gear comes back on) and LATENCY, with the meters either side.
 
+    /** A rectangle of the page's faceplate frame (1156 x 479, Fig. 169's panel at 30, 70)
+        on the body, scaled and centred as the drawn panels are. */
+    juce::Rectangle<int> onFrame (float x, float y, float w, float h) const
+    {
+        const float scale = juce::jmin ((float) body.getWidth() / 1156.0f, (float) body.getHeight() / 479.0f);
+        const float ox = (float) body.getCentreX() - 578.0f * scale, oy = (float) body.getCentreY() - 239.5f * scale;
+        return juce::Rectangle<float> (ox + x * scale, oy + y * scale, w * scale, h * scale).toNearestInt();
+    }
+
+    float frameScale() const { return juce::jmin ((float) body.getWidth() / 1156.0f, (float) body.getHeight() / 479.0f); }
+
     void layoutOutboard()
     {
-        auto b = body.reduced (16);
-        sourceKeys.setBounds (b.removeFromTop (40).withWidth (juce::jmin (360, b.getWidth())));
-        b.removeFromTop (12);
-        outboardPanel = b;
-        const int w = b.getWidth() / 3;
-        auto send = b.removeFromLeft (w).reduced (8, 0);
-        auto mode = b.removeFromLeft (w).reduced (8, 0);
-        auto ret = b.reduced (8, 0);
-        sendArea = send.withTrimmedTop (30).withTrimmedBottom (send.getHeight() / 2);
-        trimBox.setBounds (send.withTrimmedTop (send.getHeight() / 2 + 6).withSizeKeepingCentre (juce::jmin (send.getWidth() - 40, 180), 64));
-        modeKeys.setBounds (mode.withTrimmedTop (30).withHeight (juce::jmin (150, mode.getHeight() - 30)).reduced (juce::jmax (0, (mode.getWidth() - 200) / 2), 0));
-        returnArea = ret.withTrimmedTop (30).withTrimmedBottom (ret.getHeight() / 2).withSizeKeepingCentre (juce::jmin (ret.getWidth() - 60, 150), juce::jmax (60, ret.getHeight() / 2 - 30));
-        latencyBox.setBounds (ret.withTrimmedTop (ret.getHeight() / 2 + 6).withSizeKeepingCentre (juce::jmin (ret.getWidth() - 40, 180), 64));
+        // Measured from Fig. 169 (frame = figure + (30, 70)); SOURCE and LATENCY are Sidecar's.
+        sourceKeys.setBounds (onFrame (40, 76, 300, 34));
+        sendArea = onFrame (200, 192, 160, 90);
+        trimBox.setBounds (onFrame (192, 296, 174, 62));
+        modeArea = onFrame (480, 192, 200, 190);
+        returnArea = onFrame (827, 220, 110, 110);
+        latencyBox.setBounds (onFrame (798, 368, 170, 50));
     }
 
     /** The outputs patched to FX SEND side `side`, as the console names them ("LCL 7"). */
@@ -682,70 +679,133 @@ private:
         auto& fx = ctx.engine.getFx();
         g.setColour (Colours::screenPanel);
         g.fillRect (body);
-        auto b = outboardPanel;
-        g.setColour (Colours::text);
-        g.setFont (wingFont (TypeScale::statusTitle, WingWeight::SemiBold));
-        g.drawText ("EXTERNAL EFFECT", b.withHeight (28).translated (0, -30).withTrimmedLeft (sourceKeys.getWidth() + 16), juce::Justification::centredLeft, false);
+        const float k = frameScale();
+        const auto font = [k] (float px, bool semi = true) { return wingFontPx (px * k * 0.7f, semi ? WingWeight::SemiBold : WingWeight::Medium); }; // px: text height on the frame
+        g.setColour (Colours::text.withAlpha (0.85f));
+        g.setFont (font (28.0f));
+        g.drawText ("EXTERNAL EFFECT", onFrame (380, 86, 400, 34), juce::Justification::centred, false);
 
-        const int w = b.getWidth() / 3;
-        const char* titles[] = { "SEND", "FX MODE", "RETURN" };
-        for (int i = 0; i < 3; ++i)
+        // [Fig. 169] the sections framed by corner marks, their titles on top.
+        const struct
         {
-            // [Fig. 169] each section framed by corner marks, its title on top.
-            auto s = juce::Rectangle<int> (b.getX() + i * w, b.getY(), w, b.getHeight()).reduced (8, 0);
+            const char* title;
+            float x0, x1;
+        } sections[] = { { "SEND", 70, 388 }, { "FX MODE", 478, 800 }, { "RETURN", 768, 1090 } };
+        for (const auto& sec : sections)
+        {
+            const auto r = onFrame (sec.x0, 152, sec.x1 - sec.x0, 20).toFloat();
+            const float c = 16.0f * k;
             g.setColour (Colours::textDim);
-            const int c = 12;
-            g.drawLine ((float) s.getX(), (float) s.getY() + 6, (float) s.getX() + c, (float) s.getY() + 6, 2.0f);
-            g.drawLine ((float) s.getX(), (float) s.getY() + 6, (float) s.getX(), (float) s.getY() + 6 + c, 2.0f);
-            g.drawLine ((float) s.getRight() - c, (float) s.getY() + 6, (float) s.getRight(), (float) s.getY() + 6, 2.0f);
-            g.drawLine ((float) s.getRight(), (float) s.getY() + 6, (float) s.getRight(), (float) s.getY() + 6 + c, 2.0f);
-            g.setColour (Colours::text);
-            g.setFont (wingFont (TypeScale::body, WingWeight::SemiBold));
-            g.drawText (titles[i], s.withHeight (14).translated (0, 0), juce::Justification::centred, false);
+            g.drawLine (r.getX(), r.getY(), r.getX() + c, r.getY(), 2.0f);
+            g.drawLine (r.getX(), r.getY(), r.getX(), r.getY() + c, 2.0f);
+            g.drawLine (r.getRight() - c, r.getY(), r.getRight(), r.getY(), 2.0f);
+            g.drawLine (r.getRight(), r.getY(), r.getRight(), r.getY() + c, 2.0f);
+            g.setColour (Colours::text.withAlpha (0.8f));
+            g.setFont (font (19.0f, false));
+            g.drawText (sec.title, onFrame ((sec.x0 + sec.x1) * 0.5f - 100, 138, 200, 26), juce::Justification::centred, false);
+        }
+
+        // The SEND and RETURN meters: two columns of segments with their scale.
+        for (const float x : { 100.0f, 1020.0f })
+        {
+            const char* marks[] = { "CLIP", "-6", "-12", "-24", "-36", "-48", "-60" };
+            g.setFont (font (11.0f, false));
+            for (int i = 0; i < 7; ++i)
+            {
+                g.setColour (Colours::textDim);
+                g.drawText (marks[i], onFrame (x - 46, 192.0f + 27.0f * (float) i, 40, 14), juce::Justification::centredRight, false);
+            }
+            for (int col = 0; col < 2; ++col)
+                for (int seg = 0; seg < 24; ++seg)
+                {
+                    g.setColour (juce::Colour (0xff3a3a3a));
+                    g.fillRect (onFrame (x + 18.0f * (float) col, 194.0f + 7.0f * (float) seg, 12, 5));
+                }
         }
 
         // SEND: the two outputs the FX SEND is patched to (tap: ROUTING > OUTPUTS).
         {
-            auto s = sendArea;
-            const int half = s.getWidth() / 2;
             for (int side = 0; side < 2; ++side)
             {
-                auto cell = juce::Rectangle<int> (s.getX() + side * half, s.getY(), half, s.getHeight()).reduced (6, 4);
+                const float cx = 238.0f + 80.0f * (float) side;
                 const auto out = sendOutput (side);
-                g.setColour (out == "-" ? Colours::textDim : Colours::text);
-                g.setFont (wingFont (TypeScale::body, WingWeight::SemiBold));
-                g.drawFittedText (out.upToFirstOccurrenceOf (" ", false, false), cell.removeFromTop (18), juce::Justification::centred, 1);
-                const float d = (float) juce::jmin (cell.getWidth(), cell.getHeight()) * 0.7f;
-                auto circle = juce::Rectangle<float> (d, d).withCentre (cell.toFloat().getCentre());
-                g.setColour (Colours::screenTile);
+                const bool patched = out != "-";
+                g.setColour (patched ? Colours::text : Colours::textDim);
+                g.setFont (font (20.0f, false));
+                g.drawText (patched ? out.upToFirstOccurrenceOf (" ", false, false) : juce::String ("-"), onFrame (cx - 40, 186, 80, 24),
+                            juce::Justification::centred, false);
+                const auto circle = onFrame (cx - 22, 228, 44, 44).toFloat();
+                g.setColour (Colours::screen);
                 g.fillEllipse (circle);
-                g.setColour (out == "-" ? Colours::textDim : Colours::text);
+                g.setColour (patched ? Colours::text : Colours::textDim);
                 g.drawEllipse (circle, 2.0f);
-                g.setFont (wingFont (TypeScale::value, WingWeight::SemiBold));
-                g.drawFittedText (out == "-" ? juce::String ("-") : out.fromFirstOccurrenceOf (" ", false, false), circle.toNearestInt(),
-                                  juce::Justification::centred, 1);
+                for (const auto dot : { juce::Point<float> (0.0f, -1.0f), juce::Point<float> (-0.8f, 0.6f), juce::Point<float> (0.8f, 0.6f) })
+                    g.drawEllipse (juce::Rectangle<float> (8.0f * k, 8.0f * k)
+                                       .withCentre (circle.getCentre() + dot * circle.getWidth() * 0.55f),
+                                   1.5f);
+                g.setFont (font (20.0f));
+                g.drawText (patched ? out.fromFirstOccurrenceOf (" ", false, false) : juce::String ("-"), circle.toNearestInt(),
+                            juce::Justification::centred, false);
             }
-            g.setColour (Colours::caption);
-            g.setFont (wingFont (TypeScale::caption));
-            g.drawFittedText ("FX SEND " + juce::String (2 * slot + 1) + " / " + juce::String (2 * slot + 2), s.withTrimmedTop (s.getHeight()).withHeight (16),
-                              juce::Justification::centred, 1);
+        }
+
+        // FX MODE: MONO, STEREO, MID/SIDE rows, the one in use filled.
+        {
+            g.setColour (juce::Colours::black);
+            g.fillRect (modeArea);
+            const int mode = juce::roundToInt (fx.params (slot).values[ld::ext::kMode].load());
+            const char* names[] = { "MONO", "STEREO", "MID/SIDE" };
+            for (int i = 0; i < 3; ++i)
+            {
+                const auto row = onFrame (480, 192.0f + 63.0f * (float) i, 200, 63).toFloat();
+                if (i == mode)
+                {
+                    g.setColour (juce::Colour (0xff8a9a10));
+                    g.fillRect (row);
+                }
+                // The mode's symbol: one circle, two overlapping, two with a bar.
+                const auto sym = juce::Rectangle<float> (row.getX() + 22.0f * k, row.getCentreY() - 15.0f * k, 30.0f * k, 30.0f * k);
+                g.setColour (Colours::text);
+                if (i == 0)
+                    g.drawEllipse (sym, 2.0f);
+                else if (i == 1)
+                {
+                    g.fillEllipse (sym);
+                    g.setColour (i == mode ? juce::Colour (0xff8a9a10) : juce::Colours::black);
+                    g.fillEllipse (sym.translated (20.0f * k, 0.0f));
+                    g.setColour (Colours::text);
+                    g.drawEllipse (sym.translated (20.0f * k, 0.0f), 2.0f);
+                }
+                else
+                {
+                    g.drawEllipse (sym.translated (-6.0f * k, 0.0f), 2.0f);
+                    g.drawEllipse (sym.translated (24.0f * k, 0.0f), 2.0f);
+                    g.fillRect (juce::Rectangle<float> (3.0f * k, 34.0f * k).withCentre (sym.getCentre().translated (9.0f * k, 0.0f)));
+                }
+                g.setColour (Colours::text);
+                g.setFont (font (19.0f, false));
+                g.drawText (names[i], row.withTrimmedLeft (88.0f * k).toNearestInt(), juce::Justification::centredLeft, false);
+            }
         }
 
         // RETURN: the source tile (tap: choose the inputs).
         {
+            g.setColour (juce::Colour (0xff2a2a2a).darker (0.2f));
+            g.fillRect (onFrame (798, 192, 170, 166));
             auto r = returnArea.toFloat();
+            g.setColour (juce::Colours::black);
+            g.fillRect (r.expanded (4.0f * k));
             g.setColour (Colours::screenTile);
             g.fillRect (r);
             g.setColour (fx.hasReturn (slot) ? Colours::valueBlue : Colours::textDim);
-            g.fillRect (r.withHeight (juce::jmax (8.0f, r.getHeight() * 0.18f)));
-            drawIcon (g, Icon::Xlr, r.reduced (r.getWidth() * 0.3f, r.getHeight() * 0.28f), juce::Colours::white);
+            g.fillRect (r.withHeight (r.getHeight() * 0.18f));
+            drawIcon (g, Icon::Xlr, juce::Rectangle<float> (r.getX() + 8.0f * k, r.getY() + 34.0f * k, 38.0f * k, 38.0f * k), juce::Colours::white);
             g.setColour (fx.hasReturn (slot) ? Colours::gold : Colours::textDim);
-            g.setFont (wingFont (TypeScale::body, WingWeight::SemiBold));
-            g.drawFittedText (fx.returnLabel (slot), r.removeFromBottom (r.getHeight() * 0.25f).toNearestInt(), juce::Justification::centred, 1);
+            g.setFont (font (18.0f));
+            g.drawFittedText (fx.returnLabel (slot), r.removeFromBottom (r.getHeight() * 0.28f).toNearestInt(), juce::Justification::centred, 1);
             g.setColour (Colours::caption);
-            g.setFont (wingFont (TypeScale::caption));
-            g.drawFittedText ("ROUND TRIP " + juce::String (fx.getLatency (slot)) + " SAMPLES", returnArea.withTrimmedTop (returnArea.getHeight()).withHeight (16),
-                              juce::Justification::centred, 1);
+            g.setFont (font (12.0f, false));
+            g.drawFittedText ("ROUND TRIP " + juce::String (fx.getLatency (slot)) + " SAMPLES", onFrame (798, 420, 170, 16), juce::Justification::centred, 1);
         }
     }
 
@@ -782,7 +842,7 @@ private:
     EffectsPage& page;
     int slot = 0, shownModel = -1, page6 = 0;
     bool shownOutboard = false;
-    juce::Rectangle<int> outboardPanel, sendArea, returnArea;
+    juce::Rectangle<int> sendArea, returnArea, modeArea;
     /** SOURCE: a plugin in the slot, or the console's outboard insert. */
     home::Segmented sourceKeys { juce::StringArray { "PLUGIN", "OUTBOARD" }, [this] { return ctx.engine.getFx().isOutboard (slot) ? 1 : 0; },
                                  [this] (int i)
@@ -801,10 +861,6 @@ private:
                                      }
                                      rebind();
                                  } };
-    /** FX MODE (Fig. 169): MONO, STEREO, MID/SIDE. */
-    home::Segmented modeKeys { juce::StringArray { "MONO", "STEREO", "MID/SIDE" },
-                               [this] { return juce::roundToInt (ctx.engine.getFx().params (slot).values[ld::ext::kMode].load()); },
-                               [this] (int i) { ctx.engine.getFx().params (slot).values[ld::ext::kMode] = (float) i; } };
     home::KnobBox trimBox { KnobBinding {} }, latencyBox { KnobBinding {} };
     Faceplate face;
     WingKey backKey { "RACK", Icon::ChevronLeft }, onKey { "ON" }, openKey { "OPEN EDITOR", Icon::Edit },
