@@ -261,8 +261,37 @@ All notable changes to Sidecar are listed here. Versions follow
   the alternative one). Before, a press switched SOF in both modes.
 - VIEW > FADERS: AUTO RIDER in the COMP slot shows its square, lit while it rides
   (manual 5.8 p. 63).
+
 ### Changed
 
+- Display screens matched to screenshots of a WING (firmware 3.1), side by side at 1280 x 800:
+  - Status bar: the WING-LIVE cards are white outlines with a clipped corner over a separate
+    "LIVE" strip with the dots at its ends; the USB stick, the SETTINGS gear and the padlocks
+    are outlines as on the console; the A / B / C / SC chips have black print; the clock's
+    colon is set tight and the digits and date sit as on the console. ROUTING's SOURCES and
+    OUTPUTS title tile is #585858 with the number, icon and name at the console's places.
+  - ROUTING: the CHANNELS / SOURCES / OUTPUTS keys have the console's icons (two faders, a
+    block arrow into and out of a ring); the right grid is no longer dimmed while the patch
+    is locked; a channel tile prints its port ("PLAY 1/2"), not the source's name; the
+    selection frame is 4 px; the SOURCE GROUP box has the console's icon and type sizes;
+    SOURCES' POL key shows "+|-" and its GAIN sits in the parameter bar's last slot.
+  - SETUP > AUDIO > INPUT SELECT is a floating 937 x 480 window as in the manual's Fig. 35:
+    two framed panels, 52 px cells in pairs of rows with "CH" over a rule and the number.
+  - LIBRARY: the INT / USB / SHOW keys and the date key have black faces and the console's
+    icons (a console face, a USB stick on its side, a film frame); FOLDER, REMOVE, SAVE
+    +SCOPE, UPDATE, PARTIAL UPDATE / LOAD, EDIT SCOPE, RESTORE, OPEN, CLOSE, EDIT TAG and SEND
+    MIDI have their own icons; keys have a 1 px light frame (black while disabled); ADD ITEM
+    TO SHOW, EDIT TAG, SEND MIDI and the SNIP item keys are printed on their panel; the
+    toolbar keys sit at the console's places; GLOBAL moved to the right of the status bar;
+    the SHOW key reads SHOW while the show has no scenes.
+  - MONITOR: TALK A / B tabs show a speaking head; the headphones, speaker and PH+SPK icons
+    are thin outlines; PFL DIM's bar fills from the right end.
+  - METERS SETTINGS and every window's CLOSE key: a 32 px box (open at the corner where the
+    tick ends) 16 px from the right, the caption 16 px from it. Unselected tabs use 14 px
+    capitals (they were 17); chips print a little larger.
+  - USB recorder: bigger transport glyphs, 14 px 2-CH / 4-CH and 16 / 24 bit keys.
+  - VIEW: the layer title and MUTE GROUPS title are #585858; CONFIG's fields use the
+    console's 14 / 20 px caption and value.
 - HOME and the channel processing screens matched to screenshots of a WING (firmware 3.1),
   side by side at 1280 x 800:
   - GATE / COMP: the ENVELOPE centres the hold on the graph (it centred the whole shape, so

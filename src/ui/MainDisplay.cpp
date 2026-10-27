@@ -239,6 +239,15 @@ public:
                 }
                 return;
             }
+            case KnobStyle::Bar::FillRight:
+            {
+                // [3.1] PFL DIM: lit from the right end, a longer bar the more it dims.
+                line();
+                const float len = position * bar.getWidth();
+                g.setColour (colour);
+                g.fillRoundedRectangle (bar.getRight() - len, y - thick * 0.5f, len, thick, thick * 0.3f);
+                return;
+            }
             case KnobStyle::Bar::Spread:
             {
                 // WIDTH: the fill reaches as far either side as the value is from the centre.
@@ -1716,13 +1725,27 @@ void MainDisplay::paintTitleTile (juce::Graphics& g)
         // grey text), or a plain title (CUSTOM CONTROLS, MUTE GROUPS).
         const bool source = title.kind == StatusTitle::Kind::Source;
         const bool layer = title.kind == StatusTitle::Kind::Layer;
-        const auto fill = ! title.fill.isTransparent() ? title.fill : (source ? juce::Colour (0xff8a8a8a) : Colours::screenTile);
-        const auto ink = ! title.ink.isTransparent() ? title.ink : (source ? juce::Colours::black : (layer ? Colours::textDim : Colours::caption));
+        const auto fill = ! title.fill.isTransparent() ? title.fill : (source ? juce::Colour (0xff585858) : Colours::screenTile); // [3.1] #585858
+        const auto ink = ! title.ink.isTransparent() ? title.ink : (source ? juce::Colours::black : (layer ? juce::Colour (0xff585858) : Colours::caption));
         g.setColour (fill);
         g.fillRoundedRectangle (tab, corner);
         t.removeFromLeft (6.0f * k);
         const auto icon = title.icon.has_value() ? title.icon : (source ? std::optional<Icon> (Icon::Xlr) : (layer ? std::optional<Icon> (Icon::Layers) : std::nullopt));
-        if (layer || (title.kind == StatusTitle::Kind::Text && title.prefix.isEmpty() && icon.has_value()))
+        if (source && title.prefix.isNotEmpty())
+        {
+            // [3.1] ROUTING's sources and outputs: the number centred 39 px in,
+            // the icon 46 px across centred 112 px in, the name from 155.
+            g.setColour (ink);
+            g.setFont (bigFont);
+            g.drawText (title.prefix, juce::Rectangle<float> (60.0f * k, t.getHeight()).withCentre ({ tab.getX() + 39.0f * k, t.getCentreY() }),
+                        juce::Justification::centred, false);
+            if (icon.has_value())
+                drawIcon (g, *icon, juce::Rectangle<float> (46.0f * k, 46.0f * k).withCentre ({ tab.getX() + 112.0f * k, tab.getCentreY() }),
+                          title.iconInk.isTransparent() ? ink : title.iconInk);
+            auto textArea = t.withLeft (tab.getX() + 155.0f * k);
+            drawText (title.text, ink, textArea);
+        }
+        else if (layer || (title.kind == StatusTitle::Kind::Text && title.prefix.isEmpty() && icon.has_value()))
         {
             // [3.1] the VIEW screens' "C (layers) DCA" and MUTE GROUPS: the
             // section letter 32 px in, the icon centred 112 px in, the text from 155.
@@ -1795,15 +1818,30 @@ void MainDisplay::paintClock (juce::Graphics& g)
         c.removeFromLeft (14.0f * sh / 800.0f); // room for the touch-off X
     const auto now = juce::Time::getCurrentTime();
     const auto [hm, ampm] = clockText (ctx.settings, now);
-    const auto big = wingFontPx (0.034f * sh, WingWeight::SemiBold);
+    // [3.1] the digits 28 px tall with the colon set tight between them
+    // (Barlow's own colon is wide), the date 13 px tall right under them.
+    const auto big = wingFontPx (0.035f * sh, WingWeight::SemiBold);
     const auto small = wingFontPx (0.015f * sh, WingWeight::SemiBold);
     const auto timeRow = c.removeFromTop (c.getHeight() * 0.64f);
-    const float hmW = juce::GlyphArrangement::getStringWidth (big, hm);
+    const auto colonAt = hm.indexOfChar (':');
+    const auto hours = colonAt < 0 ? hm : hm.substring (0, colonAt);
+    const auto minutes = colonAt < 0 ? juce::String() : hm.substring (colonAt + 1);
+    const float colonW = juce::GlyphArrangement::getStringWidth (big, ":");
+    const float colonAdvance = colonAt < 0 ? 0.0f : colonW * 0.55f;
+    const float hoursW = juce::GlyphArrangement::getStringWidth (big, hours), minutesW = juce::GlyphArrangement::getStringWidth (big, minutes);
+    const float hmW = hoursW + colonAdvance + minutesW;
     const float smallW = juce::GlyphArrangement::getStringWidth (small, ":00") + 2.0f;
     const float x0 = timeRow.getCentreX() - (hmW + smallW) * 0.5f;
     g.setColour (Colours::caption);
     g.setFont (big);
-    g.drawText (hm, juce::Rectangle<float> (x0, timeRow.getY(), hmW + 2.0f, timeRow.getHeight()), juce::Justification::centredLeft, false);
+    g.drawText (hours, juce::Rectangle<float> (x0, timeRow.getY(), hoursW + 2.0f, timeRow.getHeight()), juce::Justification::centredLeft, false);
+    if (colonAt >= 0)
+    {
+        g.drawText (":", juce::Rectangle<float> (x0 + hoursW + colonAdvance * 0.5f - colonW * 0.5f, timeRow.getY(), colonW, timeRow.getHeight()),
+                    juce::Justification::centred, false);
+        g.drawText (minutes, juce::Rectangle<float> (x0 + hoursW + colonAdvance, timeRow.getY(), minutesW + 2.0f, timeRow.getHeight()),
+                    juce::Justification::centredLeft, false);
+    }
     auto side = juce::Rectangle<float> (x0 + hmW + 1.0f, timeRow.getY(), smallW + 4.0f, timeRow.getHeight()).reduced (0.0f, timeRow.getHeight() * 0.1f);
     g.setFont (small);
     if (ampm.isNotEmpty())
@@ -1818,8 +1856,8 @@ void MainDisplay::paintClock (juce::Graphics& g)
     g.setColour (Colours::caption);
     g.drawText (now.formatted (":%S"), side, juce::Justification::centredLeft, false);
     g.setColour (Colours::textDim);
-    g.setFont (wingFontPx (0.017f * sh, WingWeight::SemiBold));
-    g.drawText (uiprefs::formatDate (ctx.settings, now), c, juce::Justification::centredTop, false);
+    g.setFont (wingFontPx (0.0165f * sh, WingWeight::SemiBold));
+    g.drawText (uiprefs::formatDate (ctx.settings, now), c.translated (0.0f, -2.5f * sh / 800.0f), juce::Justification::centredTop, false);
 }
 
 void MainDisplay::paintStatusBar (juce::Graphics& g)
@@ -1862,7 +1900,7 @@ void MainDisplay::paintStatusBar (juce::Graphics& g)
         {
             drawChip (g, { x0 + x * k, r.getY() + y * k, w * k, chipH }, text, fill, ink);
         };
-        const auto offInk = juce::Colour (0xff181c18);
+        const auto offInk = juce::Colour (0xff080808); // [3.1] near-black on the grey chips
         const auto rate = device != nullptr ? juce::String (juce::roundToInt (device->getCurrentSampleRate() / 1000.0)) + "K" : juce::String ("--");
         chip (0.0f, 5.0f, 28.0f, rate, device != nullptr ? Colours::green : Colours::mute, juce::Colours::black);
         chip (33.0f, 5.0f, 23.0f, device != nullptr ? "INT" : "NO DEV", device != nullptr ? Colours::green : Colours::mute, juce::Colours::black);
@@ -1879,29 +1917,36 @@ void MainDisplay::paintStatusBar (juce::Graphics& g)
                                                                      : Colours::green;
     drawIcon (g, Icon::UsbStick, usbTile.toFloat().reduced ((float) usbTile.getHeight() * 0.24f), usbInk);
 
-    // The recorder (the WING-LIVE cards "1 2", "• LIVE •"): red while recording,
-    // green while playing, amber when its folder can't be written.
-    tile (liveTile);
+    // The recorder (the WING-LIVE cards "1 2", "• LIVE •"): a tile with the two
+    // cards (white outlines with a clipped corner, 22 x 29 px, white numbers)
+    // over a "LIVE" strip 2 px below it, the dots at its ends [3.1]. Red while
+    // recording, green while playing, amber when its folder can't be written.
     {
-        auto r = liveTile.toFloat().reduced (6.0f * k, 5.0f * k);
         const auto state = ctx.recording != nullptr ? ctx.recording->getState() : Recorder::State::Stopped;
         const auto liveInk = state == Recorder::State::Recording ? (blink ? Colours::mute : Colours::mute.darker (0.6f))
                            : state == Recorder::State::Playing   ? Colours::green
                            : ! liveWritable                       ? Colours::warning
-                                                                  : Colours::textDim;
-        auto caption = r.removeFromBottom (r.getHeight() * 0.3f);
-        auto cards = r.withSizeKeepingCentre (juce::jmin (r.getWidth(), r.getHeight() * 1.5f), r.getHeight());
+                                                                  : juce::Colour (0xfff0f0f0);
+        auto r = liveTile.toFloat();
+        const auto cardsTile = r.removeFromTop (42.0f * k);
+        r.removeFromTop (2.0f * k);
+        g.setColour (Colours::screenHeader);
+        g.fillRoundedRectangle (cardsTile, corner);
+        g.fillRoundedRectangle (r, corner);
         for (int i = 0; i < 2; ++i)
         {
-            auto card = cards.removeFromLeft (cards.getWidth() * (i == 0 ? 0.5f : 1.0f)).reduced (cards.getHeight() * 0.03f, 0.0f);
-            drawIcon (g, Icon::SdCard, card, liveInk);
+            const auto card = juce::Rectangle<float> (cardsTile.getX() + (7.0f + 28.0f * (float) i) * k, cardsTile.getY() + 8.0f * k, 22.0f * k, 29.0f * k);
+            drawIcon (g, Icon::SdCard, juce::Rectangle<float> (30.0f * k, 30.0f * k).withCentre (card.getCentre()), liveInk);
             g.setColour (liveInk);
-            g.setFont (wingFontPx (card.getHeight() * 0.3f));
-            g.drawText (juce::String (i + 1), card.translated (0.0f, card.getHeight() * 0.06f), juce::Justification::centred, false);
+            g.setFont (wingFontPx (11.0f * k));
+            g.drawText (juce::String (i + 1), card.translated (0.5f * k, 1.5f * k), juce::Justification::centred, false);
         }
-        g.setColour (liveInk);
+        g.setColour (state == Recorder::State::Stopped && liveWritable ? Colours::textDim : liveInk);
         g.setFont (wingFontPx (TypeScale::statusCaption * sh));
-        g.drawText (juce::String::fromUTF8 ("\xe2\x80\xa2  LIVE  \xe2\x80\xa2"), caption.translated (0.0f, 2.0f * k), juce::Justification::centred, false);
+        g.drawText ("LIVE", r, juce::Justification::centred, false);
+        g.setColour (liveInk);
+        for (const float dx : { 4.0f, 60.0f })
+            g.fillEllipse (juce::Rectangle<float> (3.5f * k, 3.5f * k).withCentre ({ r.getX() + dx * k, r.getCentreY() }));
     }
 
     // The screen's keys: an icon above a small grey caption.

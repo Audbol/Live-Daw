@@ -59,7 +59,7 @@ enum class Icon
     UsbStick,   // USB stick (status bar)
     // SETUP, LIBRARY, VIEW and ROUTING screens
     Power,         // SHUTDOWN
-    RemoveCircle,  // REMOVE (a dot in a ring)
+    RemoveCircle,  // REMOVE (an X in a ring)
     MinusCircle,   // REMOVE ITEMS
     ClearCircle,   // CLEAR / NONE (a cross in a ring)
     Info,          // the circled "i" after some labels
@@ -68,6 +68,8 @@ enum class Icon
     Tag,           // EDIT TAG
     Storage,       // INT location (internal storage)
     ShowFile,      // SHOW location (film frame)
+    UsbKey,        // USB location (a USB stick on its side)
+    FolderAdd,     // FOLDER (a folder with a circled plus)
     GoPrev,        // GO PREV (play + <)
     GoNext,        // GO NEXT (play + >)
     SortDate,      // sort by date (calendar)
@@ -83,8 +85,23 @@ enum class Icon
     Record,
     SaveTray,      // SAVE (arrow down into a tray)
     LoadTray,      // LOAD (arrow up out of a tray)
+    SaveScope,     // SAVE +SCOPE (save arrow, scope squares)
+    UpdateTray,    // UPDATE (a pencil over a tray)
+    PartialUpdate, // PARTIAL UPDATE
+    EditScope,     // EDIT SCOPE (a pencil, scope squares)
+    PartialLoad,   // PARTIAL LOAD
+    RestoreTray,   // RESTORE (two arrows up out of a tray)
+    OpenOut,       // OPEN (an arrow out of a box)
+    CloseIn,       // CLOSE (an arrow into a box)
+    EditTag,       // EDIT TAG (a pencil over a tag)
+    SendMidi,      // SEND MIDI (a pencil over "MIDI")
     SourcesIn,     // ROUTING: SOURCES (arrow into a ring)
     OutputsOut,    // ROUTING: OUTPUTS (arrow out of a ring)
+    ChannelFaders, // ROUTING: CHANNELS (two faders, outlined caps)
+    PhonesSpeaker, // MONITOR: PH+SPK (headphones before a speaker)
+    TalkHead,      // MONITOR: TALK A (a speaking head, facing left)
+    TalkHeadRight, // MONITOR: TALK B (facing right)
+    Polarity,      // ROUTING > SOURCES: POL ("+|-")
     ChevronUp,
     ChevronDown,
     // Recorder and multitrack editor

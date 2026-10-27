@@ -38,6 +38,7 @@ struct KnobStyle
     {
         Auto,     // chosen from the binding (label, steps, bipolar)
         Fill,     // filled from the left
+        FillRight,// filled from the right end, as far as the value (an attenuation: PFL DIM)
         Centre,   // filled from the centre, with a centre tick
         Width,    // filled either side of a centre tick, the wider the lower the value (Q)
         Spread,   // filled either side of a centre tick, as wide as the value is far from the centre (WIDTH)

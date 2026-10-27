@@ -604,7 +604,7 @@ MonitorsPage::MonitorsPage (UiContext& c) : ctx (c)
         { "TALK B", Icon::ChevronUp, talkYellow, [&e] { return e.isTalkOn (1); }, nullptr, {}, 1 },
         { "PHONES", Icon::Headphones, pathOlive, [&e] { return e.soloBus.load() == 0; }, [pickPath] { pickPath (0); }, {} },
         { "SPEAKERS", Icon::Speaker, pathOlive, [&e] { return e.soloBus.load() == 1; }, [pickPath] { pickPath (1); }, {} },
-        { "PH+SPK", Icon::Speakers, pathOlive, [&e] { return e.soloBus.load() == 2; }, [pickPath] { pickPath (2); }, {} },
+        { "PH+SPK", Icon::PhonesSpeaker, pathOlive, [&e] { return e.soloBus.load() == 2; }, [pickPath] { pickPath (2); }, {} },
         { "DIM", Icon::ChevronDown, dimGreen, [&e] { return e.monitorDim.load(); }, [&e, flip] { flip (e.monitorDim); }, {} },
         { "MUTE", Icon::Cancel, muteRed, [&e] { return e.monitorMute.load(); }, [&e, flip] { flip (e.monitorMute); }, {} },
         { "MONO", Icon::Circle, monoOrange, [&e] { return e.monitorMono.load(); }, [&e, flip] { flip (e.monitorMono); }, {} },
@@ -738,7 +738,7 @@ std::vector<KnobStyle> MonitorsPage::getKnobStyles()
         return { {}, style (KnobStyle::Bar::Centre, KnobColours::white), {}, style (KnobStyle::Bar::Fill, KnobColours::blue),
                  style (KnobStyle::Bar::Fill, KnobColours::green) };
     return { {}, style (KnobStyle::Bar::Fill, KnobColours::white),
-             style (KnobStyle::Bar::Fill, KnobColours::white), style (KnobStyle::Bar::Fill, KnobColours::blue),
+             style (KnobStyle::Bar::Fill, KnobColours::white), style (KnobStyle::Bar::FillRight, KnobColours::blue),
              style (KnobStyle::Bar::Fill, Colours::lime), style (KnobStyle::Bar::Fill, KnobColours::blue) };
 }
 
@@ -954,11 +954,10 @@ void MonitorsPage::paintTalk (juce::Graphics& g)
 {
     // Without a talkback channel the talk side is dim (TALKBACK DISABLED).
     const bool talkDim = ctx.engine.getTalkStrip() == nullptr;
-    constexpr int handheldMic = 102; // the WING's talkback icon
     g.setColour (dimmed (Dark::header, talkDim));
     g.fillRect (talkTabs);
     for (int i = 0; i < 2; ++i)
-        tab (g, talkTabKeys[i], Icon::Edit, i == 0 ? "TALK A" : "TALK B", talkTab == i, talkDim, handheldMic);
+        tab (g, talkTabKeys[i], i == 0 ? Icon::TalkHead : Icon::TalkHeadRight, i == 0 ? "TALK A" : "TALK B", talkTab == i, talkDim); // [3.1] a speaking head
     g.setColour (juce::Colours::black);
     g.fillRect (talkTabKeys[0].getUnion (talkTabKeys[1]).withTop (talkTabKeys[0].getBottom()).withHeight (px (3.0f)));
 

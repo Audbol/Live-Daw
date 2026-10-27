@@ -62,8 +62,19 @@ namespace
     {
         auto* k = keys.add (new WingKey (text, icon, on));
         styleIconKey (*k);
+        // [3.1] a 1 px #c0c0c0 frame, black on a disabled key.
+        k->outlineColour = Colours::caption;
+        k->outlineWidth = 1.0f;
+        k->blackFrameWhenDisabled = true;
         enableKey (*k, enabled);
         parent.addAndMakeVisible (k);
+        return k;
+    }
+
+    /** [Fig. 45, 49] a key printed on its panel, without fill or frame. */
+    WingKey* framelessKey (WingKey* k)
+    {
+        k->frameless = true;
         return k;
     }
 
@@ -116,7 +127,7 @@ public:
     {
         auto& ctx = page.ctx;
         // OPEN: the show selected at INT / USB, else a file dialog.
-        makeKey (keys, *this, "OPEN", Icon::Folder)->onClick = [this]
+        makeKey (keys, *this, "OPEN", Icon::OpenOut)->onClick = [this]
         {
             auto& c = page.ctx;
             const auto file = page.list->getSelectedFile();
@@ -127,7 +138,7 @@ public:
         };
         makeKey (keys, *this, "CREATE", Icon::Edit)->onClick = [&ctx] { if (ctx.newShow) ctx.newShow(); };
         makeKey (keys, *this, "SAVE", Icon::SaveTray)->onClick = [&ctx] { if (ctx.saveShow) ctx.saveShow (false); };
-        makeKey (keys, *this, "CLOSE", Icon::ClearCircle)->onClick = [&ctx] { if (ctx.newShow) ctx.newShow(); };
+        makeKey (keys, *this, "CLOSE", Icon::CloseIn)->onClick = [&ctx] { if (ctx.newShow) ctx.newShow(); };
         // SAVE AS: into the folder shown at INT / USB, else a file dialog.
         makeKey (keys, *this, "SAVE AS", Icon::SaveTray)->onClick = [this]
         {
@@ -147,9 +158,10 @@ public:
         };
         // ADD ITEM TO SHOW (manual 5.6 p. 52): the snippet, clip or preset file selected at INT / USB.
         addItem = makeKey (keys, *this, "ADD ITEM\nTO SHOW", Icon::Plus, false);
+        addItem->frameless = true; // [Fig. 45] print on the panel
         addItem->onClick = [this] { page.addItemToShow(); };
-        makeKey (keys, *this, "EDIT\nTAG", Icon::Tag)->onClick = [this] { editTag(); };
-        makeKey (keys, *this, "SEND\nMIDI", Icon::Edit)->onClick = [this] { editMidi(); };
+        framelessKey (makeKey (keys, *this, "EDIT\nTAG", Icon::EditTag))->onClick = [this] { editTag(); };
+        framelessKey (makeKey (keys, *this, "SEND\nMIDI", Icon::SendMidi))->onClick = [this] { editMidi(); };
         // WING files (Sidecar): snapshots apply to the console, shows add scenes.
         // IMPORT WING SNAP/SHOW... and EXPORT WING SNAP... (the file dialogs say which).
         makeKey (keys, *this, "IMPORT\nWING", Icon::LoadTray)->onClick = [this] { importWing(); };
@@ -294,13 +306,13 @@ public:
     explicit SnapTab (LibraryPage& p) : page (p)
     {
         save = makeKey (keys, *this, "SAVE", Icon::SaveTray);
-        saveScope = makeKey (keys, *this, "SAVE\n+SCOPE", Icon::SaveTray);
-        update = makeKey (keys, *this, "UPDATE", Icon::Edit);
-        partialUpdate = makeKey (keys, *this, "PARTIAL\nUPDATE", Icon::Edit);
-        editScope = makeKey (keys, *this, "EDIT\nSCOPE", Icon::Overview);
+        saveScope = makeKey (keys, *this, "SAVE\n+SCOPE", Icon::SaveScope);
+        update = makeKey (keys, *this, "UPDATE", Icon::UpdateTray);
+        partialUpdate = makeKey (keys, *this, "PARTIAL\nUPDATE", Icon::PartialUpdate);
+        editScope = makeKey (keys, *this, "EDIT\nSCOPE", Icon::EditScope);
         loadKey = makeKey (keys, *this, "LOAD", Icon::LoadTray);
-        partialLoad = makeKey (keys, *this, "PARTIAL\nLOAD", Icon::LoadTray);
-        restore = makeKey (keys, *this, "RESTORE", Icon::Reset);
+        partialLoad = makeKey (keys, *this, "PARTIAL\nLOAD", Icon::PartialLoad);
+        restore = makeKey (keys, *this, "RESTORE", Icon::RestoreTray);
         importKey = makeKey (keys, *this, "IMPORT", Icon::LoadTray);
         exportKey = makeKey (keys, *this, "EXPORT", Icon::SaveTray);
         rows = { { {}, { save, saveScope }, {} }, { {}, { update, partialUpdate }, { editScope } }, { {}, { loadKey, partialLoad }, { restore } },
@@ -493,16 +505,16 @@ public:
     {
         save = makeKey (keys, *this, "SAVE", Icon::SaveTray);
         saveAdd = makeKey (keys, *this, "SAVE\n+ ADD", Icon::SaveTray);
-        update = makeKey (keys, *this, "UPDATE", Icon::Edit);
+        update = makeKey (keys, *this, "UPDATE", Icon::UpdateTray);
         loadFocus = makeKey (keys, *this, "LOAD\nFOCUS", Icon::LoadTray);
         loadKey = makeKey (keys, *this, "LOAD", Icon::LoadTray);
-        partialLoad = makeKey (keys, *this, "PARTIAL\nLOAD", Icon::LoadTray);
+        partialLoad = makeKey (keys, *this, "PARTIAL\nLOAD", Icon::PartialLoad);
         rec = makeKey (keys, *this, "REC", Icon::Record, true, Colours::mute);
         stop = makeKey (keys, *this, "STOP", Icon::Stop);
         recFocus = makeKey (keys, *this, "REC\nFOCUS", Icon::Overview, true, Dark::choice);
-        addItems = makeKey (keys, *this, "ADD\nITEMS", Icon::Plus);
-        removeItems = makeKey (keys, *this, "REMOVE\nITEMS", Icon::MinusCircle);
-        clearAll = makeKey (keys, *this, "CLEAR\nALL", Icon::Trash);
+        addItems = framelessKey (makeKey (keys, *this, "ADD\nITEMS", Icon::Plus));
+        removeItems = framelessKey (makeKey (keys, *this, "REMOVE\nITEMS", Icon::MinusCircle));
+        clearAll = framelessKey (makeKey (keys, *this, "CLEAR\nALL", Icon::Trash));
         exportKey = makeKey (keys, *this, "EXPORT", Icon::SaveTray);
         importKey = makeKey (keys, *this, "IMPORT", Icon::LoadTray);
         // REC FOCUS turns light blue once edited; REC lights red while recording.
@@ -1458,9 +1470,11 @@ std::vector<StatusKey> LibraryPage::getStatusKeys()
     // GLOBAL: an open padlock without global safes, closed (lit) with some.
     const bool safe = anyGlobalSafe();
     // [Fig. 48] a green open padlock, or a red closed one while items are global-safe.
-    return { { "GLOBAL", safe ? Icon::LockClosed : Icon::LockOpen, false, [this] { openGlobal(); }, safe ? Colours::tapRed : Colours::green },
-             // ADD on the top of the screen (manual 5.6 p. 52): the selected file into the show.
-             { "ADD", Icon::Plus, false, [this] { addItemToShow(); } } };
+    // [3.1] GLOBAL sits at the right, next to the clock.
+    StatusKey global { "GLOBAL", safe ? Icon::LockClosed : Icon::LockOpen, false, [this] { openGlobal(); }, safe ? Colours::tapRed : Colours::green };
+    global.atRight = true;
+    // ADD on the top of the screen (manual 5.6 p. 52): the selected file into the show.
+    return { { "ADD", Icon::Plus, false, [this] { addItemToShow(); } }, global };
 }
 
 StatusTitle LibraryPage::getStatusTitle()

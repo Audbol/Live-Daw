@@ -234,6 +234,14 @@ inline juce::String pairLabel (int left, int right)
     return sourceLabel (left) + "/" + juce::String (numberInGroup (right) + 1);
 }
 
+/** What ROUTING > CHANNELS prints under a patched channel's icon: the port's
+    label ("LCL 3"), or the pair's ("PLAY 1/2") for a stereo channel; never the
+    source's name, which only its colour strip shows (manual Fig. 30, [3.1]). */
+inline juce::String channelTileLabel (int left, int right, bool stereo)
+{
+    return stereo ? pairLabel (left, right >= 0 ? right : left + 1) : sourceLabel (left);
+}
+
 /** An output port as its tile numbers it (1-based within its group). */
 inline int outputNumber (int port) { return (isRecorderPort (port) ? port - kRecorderPortBase : port % kBlock) + 1; }
 

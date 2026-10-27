@@ -314,7 +314,7 @@ public:
         t.kind = StatusTitle::Kind::Text;
         t.text = "MUTE GROUPS";
         t.icon = Icon::MuteGroup;
-        t.ink = Colours::textDim;
+        t.ink = juce::Colour (0xff585858); // [3.1] #585858
         t.iconInk = juce::Colour (0xfff05050);
         return t;
     }
