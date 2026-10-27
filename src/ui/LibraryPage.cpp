@@ -145,7 +145,9 @@ public:
                               page.list->selectFile (file);
                           });
         };
-        makeKey (keys, *this, "ADD ITEM\nTO SHOW", Icon::Plus, false); // needs the file browser (G-N3)
+        // ADD ITEM TO SHOW (manual 5.6 p. 52): the snippet, clip or preset file selected at INT / USB.
+        addItem = makeKey (keys, *this, "ADD ITEM\nTO SHOW", Icon::Plus, false);
+        addItem->onClick = [this] { page.addItemToShow(); };
         makeKey (keys, *this, "EDIT\nTAG", Icon::Tag)->onClick = [this] { editTag(); };
         makeKey (keys, *this, "SEND\nMIDI", Icon::Edit)->onClick = [this] { editMidi(); };
         // WING files (Sidecar): snapshots apply to the console, shows add scenes.
@@ -154,6 +156,12 @@ public:
         makeKey (keys, *this, "EXPORT\nWING", Icon::SaveTray)->onClick = [this] { exportWing(); };
         rows = { { {}, { keys[0], keys[1] }, { keys[2] } }, { {}, { keys[3] }, { keys[4] } }, { {}, { keys[5] }, { keys[7], keys[6] } },
                  { {}, { keys[8] }, { keys[9] } } };
+    }
+
+    void refresh()
+    {
+        enableKey (*addItem, page.list->getLocation() != ShowPanel::Location::Show && Show::canAddToShow (page.list->getSelectedFile()));
+        repaint();
     }
 
     void paint (juce::Graphics& g) override
@@ -272,6 +280,7 @@ private:
 
     LibraryPage& page;
     juce::OwnedArray<WingKey> keys;
+    WingKey* addItem = nullptr;
     std::vector<KeyRow> rows;
     juce::Rectangle<int> info;
     std::unique_ptr<juce::FileChooser> chooser;
@@ -395,7 +404,11 @@ public:
     void refresh()
     {
         const auto scene = page.ctx.show.getScene (page.selectedScene());
-        for (auto* k : { update, partialUpdate, editScope, partialLoad, restore, exportKey })
+        // A file added to the show has no snapshot to update and no scope (RESTORE loads it again).
+        const bool snapshot = scene.has_value() && scene->item == Show::ItemKind::Snapshot;
+        for (auto* k : { update, partialUpdate, editScope, partialLoad })
+            enableKey (*k, snapshot);
+        for (auto* k : { restore, exportKey })
             enableKey (*k, scene.has_value());
         enableKey (*loadKey, scene.has_value() || page.selectedWingSnapshot() != juce::File());
         fade.setEnabled (scene.has_value());
@@ -479,6 +492,7 @@ public:
     explicit SnipTab (LibraryPage& p) : page (p)
     {
         save = makeKey (keys, *this, "SAVE", Icon::SaveTray);
+        saveAdd = makeKey (keys, *this, "SAVE\n+ ADD", Icon::SaveTray);
         update = makeKey (keys, *this, "UPDATE", Icon::Edit);
         loadFocus = makeKey (keys, *this, "LOAD\nFOCUS", Icon::LoadTray);
         loadKey = makeKey (keys, *this, "LOAD", Icon::LoadTray);
@@ -496,13 +510,15 @@ public:
         rec->isOn = [this] { return page.ctx.show.isRecordingSnippet(); };
         rec->iconColour = Colours::text;
         rec->onInk = Colours::text; // white on the red, as the recorder's REC
-        rows = { { {}, { save }, { exportKey } }, { {}, { update }, { loadFocus } }, { {}, { loadKey, partialLoad }, { importKey } },
+        rows = { { {}, { save, saveAdd }, { exportKey } }, { {}, { update }, { loadFocus } }, { {}, { loadKey, partialLoad }, { importKey } },
                  { {}, { rec, stop }, { recFocus } }, { {}, { addItems, removeItems }, { clearAll } } };
         // EXPORT / IMPORT: snippet files in the folder at INT / USB; an imported one goes into the selected scene.
         exportKey->onClick = [this] { page.exportSelected (true); };
         importKey->onClick = [this] { page.importSelected (true); };
 
         save->onClick = [this] { addSnippet(); };
+        // SAVE + ADD (manual 5.6 p. 52): the snippet as a scene of its own, after the selected scene.
+        saveAdd->onClick = [this] { addSnippetScene(); };
         update->onClick = [this]
         {
             const auto item = page.list->getSelected();
@@ -594,10 +610,14 @@ public:
         const auto item = page.list->getSelected();
         const bool snippet = item.isSnippet();
         const bool recording = show.isRecordingSnippet(), recorded = show.hasRecordedSnippet();
-        enableKey (*save, show.getScene (item.scene).has_value() && ! recording);
+        // Snippets go into a snapshot scene (a file added to the show holds none).
+        const auto scene = show.getScene (item.scene);
+        const bool snapshot = scene.has_value() && scene->item == Show::ItemKind::Snapshot;
+        enableKey (*save, snapshot && ! recording);
+        enableKey (*saveAdd, ! recording);
         for (auto* k : { update, loadFocus, loadKey, partialLoad, addItems, removeItems, exportKey })
             enableKey (*k, snippet && ! recording);
-        enableKey (*importKey, show.getScene (item.scene).has_value() && ! recording);
+        enableKey (*importKey, snapshot && ! recording);
         enableKey (*stop, recording); // REC stays lit (red) while recording
         enableKey (*clearAll, snippet || recording || recorded);
         rec->repaint();
@@ -676,6 +696,20 @@ private:
         page.list->select ({ item.scene, index });
     }
 
+    void addSnippetScene()
+    {
+        auto& show = page.ctx.show;
+        const auto name = "Snippet " + juce::String (show.getNumScenes() + 1);
+        const auto focus = currentFocus();
+        const bool recorded = show.hasRecordedSnippet();
+        const int index = show.addSnippetScene (name, recorded && ! page.focusEdited ? nullptr : &focus, recorded, page.insertionIndex());
+        if (index < 0)
+            return;
+        page.ctx.log.info ("Saved \"" + name + "\" as scene " + juce::String (index + 1));
+        page.list->refresh();
+        page.list->select ({ index, -1 });
+    }
+
     void editItems (bool add)
     {
         const auto item = page.list->getSelected();
@@ -696,7 +730,8 @@ private:
 
     LibraryPage& page;
     juce::OwnedArray<WingKey> keys;
-    WingKey *save, *update, *loadFocus, *loadKey, *partialLoad, *rec, *stop, *recFocus, *addItems, *removeItems, *clearAll, *exportKey, *importKey;
+    WingKey *save, *saveAdd, *update, *loadFocus, *loadKey, *partialLoad, *rec, *stop, *recFocus, *addItems, *removeItems, *clearAll, *exportKey,
+        *importKey;
     std::vector<KeyRow> rows;
     juce::Rectangle<int> counter;
 };
@@ -712,29 +747,16 @@ public:
     explicit FxTab (LibraryPage& p) : page (p)
     {
         save = makeKey (keys, *this, "SAVE", Icon::SaveTray);
+        saveAdd = makeKey (keys, *this, "SAVE\n+ ADD", Icon::SaveTray);
         loadKey = makeKey (keys, *this, "LOAD", Icon::LoadTray);
-        rows = { { {}, { save }, {} }, { {}, { loadKey }, {} } };
+        rows = { { {}, { save, saveAdd }, {} }, { {}, { loadKey }, {} } };
         styleIconKey (slotKey);
         addAndMakeVisible (slotKey);
         slotKey.onClick = [this] { chooseSlot(); };
 
-        save->onClick = [this]
-        {
-            auto& fx = page.ctx.engine.getFx();
-            auto* plugin = fx.getPlugin (slot);
-            const auto device = plugin != nullptr ? plugin->getName() : models::model (models::Fx, fx.getModel (slot)).name;
-            savePresetAs (page, "SAVE FX " + juce::String (slot + 1) + " AS PRESET", device, page.list->getFolder(), Show::fxPresetExtension,
-                          [this] (const juce::File& file, const juce::String& name)
-                          {
-                              const auto r = page.ctx.show.saveFxPreset (slot, file, name);
-                              if (r.failed())
-                                  page.ctx.log.error (r.getErrorMessage());
-                              else
-                                  page.ctx.log.info ("Saved FX " + juce::String (slot + 1) + " as " + file.getFileName());
-                              page.list->selectFile (file);
-                              repaint();
-                          });
-        };
+        save->onClick = [this] { savePreset (false); };
+        // SAVE + ADD (manual 5.6 p. 52): the preset file, and a scene loading it into this slot.
+        saveAdd->onClick = [this] { savePreset (true); };
         loadKey->onClick = [this]
         {
             const auto file = page.list->getSelectedFile();
@@ -750,11 +772,35 @@ public:
         startTimerHz (4);
     }
 
+    /** The FX slot SAVE stores and LOAD (and an FX preset added to the show) loads into. */
+    int getSlot() const noexcept { return slot; }
+
+    void savePreset (bool addToShow)
+    {
+            auto& fx = page.ctx.engine.getFx();
+            auto* plugin = fx.getPlugin (slot);
+            const auto device = plugin != nullptr ? plugin->getName() : models::model (models::Fx, fx.getModel (slot)).name;
+            savePresetAs (page, "SAVE FX " + juce::String (slot + 1) + " AS PRESET", device, page.list->getFolder(), Show::fxPresetExtension,
+                          [this, addToShow] (const juce::File& file, const juce::String& name)
+                          {
+                              const auto r = page.ctx.show.saveFxPreset (slot, file, name);
+                              if (r.failed())
+                                  page.ctx.log.error (r.getErrorMessage());
+                              else
+                                  page.ctx.log.info ("Saved FX " + juce::String (slot + 1) + " as " + file.getFileName());
+                              page.list->selectFile (file);
+                              if (addToShow && r.wasOk())
+                                  page.addToShow (file, slot);
+                              repaint();
+                          });
+    }
+
     void refresh()
     {
         const auto file = page.list->getSelectedFile();
         enableKey (*loadKey, file.hasFileExtension (Show::fxPresetExtension));
         enableKey (*save, page.ctx.engine.getFx().isLoaded (slot));
+        enableKey (*saveAdd, page.ctx.engine.getFx().isLoaded (slot));
         repaint();
     }
 
@@ -850,7 +896,7 @@ private:
 
     LibraryPage& page;
     juce::OwnedArray<WingKey> keys;
-    WingKey *save, *loadKey;
+    WingKey *save, *saveAdd, *loadKey;
     WingKey slotKey { {}, Icon::ChevronDown };
     std::vector<KeyRow> rows;
     juce::Rectangle<int> presetBox, arrow, slotBox;
@@ -871,31 +917,17 @@ public:
     explicit ChanTab (LibraryPage& p) : page (p)
     {
         save = makeKey (keys, *this, "SAVE", Icon::SaveTray);
+        saveAdd = makeKey (keys, *this, "SAVE\n+ ADD", Icon::SaveTray);
         updateScope = makeKey (keys, *this, "UPDATE\nSCOPE", Icon::Overview);
         loadKey = makeKey (keys, *this, "LOAD", Icon::LoadTray);
-        rows = { { {}, { save, updateScope }, {} }, { {}, { loadKey }, {} } };
+        rows = { { {}, { save, updateScope }, {} }, { {}, { loadKey, saveAdd }, {} } };
         styleIconKey (stripKey);
         addAndMakeVisible (stripKey);
         stripKey.onClick = [this] { chooseStrip(); };
 
-        save->onClick = [this]
-        {
-            auto* s = selectedStrip();
-            if (s == nullptr)
-                return;
-            savePresetAs (page, "SAVE " + s->getLabel().toUpperCase() + " AS PRESET", stripName (*s), page.list->getFolder(), Show::channelPresetExtension,
-                          [this, ref = state::StripRef::of (*s)] (const juce::File& file, const juce::String& name)
-                          {
-                              const auto r = page.ctx.show.saveChannelPreset (ref, scope, file, name);
-                              if (r.failed())
-                                  page.ctx.log.error (r.getErrorMessage());
-                              else
-                                  page.ctx.log.info ("Saved channel preset " + file.getFileName());
-                              page.list->selectFile (file);
-                              shownFile = file;
-                              repaint();
-                          });
-        };
+        save->onClick = [this] { savePreset (false); };
+        // SAVE + ADD (manual 5.6 p. 52): the preset file, and a scene loading it onto this strip.
+        saveAdd->onClick = [this] { savePreset (true); };
         updateScope->onClick = [this]
         {
             const auto file = page.list->getSelectedFile();
@@ -935,7 +967,29 @@ public:
         enableKey (*loadKey, preset && selectedStrip() != nullptr);
         enableKey (*updateScope, preset);
         enableKey (*save, selectedStrip() != nullptr);
+        enableKey (*saveAdd, selectedStrip() != nullptr);
         repaint();
+    }
+
+    void savePreset (bool addToShow)
+    {
+        auto* s = selectedStrip();
+        if (s == nullptr)
+            return;
+        savePresetAs (page, "SAVE " + s->getLabel().toUpperCase() + " AS PRESET", stripName (*s), page.list->getFolder(), Show::channelPresetExtension,
+                      [this, addToShow, ref = state::StripRef::of (*s)] (const juce::File& file, const juce::String& name)
+                      {
+                          const auto r = page.ctx.show.saveChannelPreset (ref, scope, file, name);
+                          if (r.failed())
+                              page.ctx.log.error (r.getErrorMessage());
+                          else
+                              page.ctx.log.info ("Saved channel preset " + file.getFileName());
+                          page.list->selectFile (file);
+                          shownFile = file;
+                          if (addToShow && r.wasOk())
+                              page.addToShow (file, 0, ref);
+                          repaint();
+                      });
     }
 
     void paint (juce::Graphics& g) override
@@ -1063,7 +1117,7 @@ private:
 
     LibraryPage& page;
     juce::OwnedArray<WingKey> keys;
-    WingKey *save, *updateScope, *loadKey;
+    WingKey *save, *saveAdd, *updateScope, *loadKey;
     WingKey stripKey { {}, Icon::ChevronDown };
     std::vector<KeyRow> rows;
     std::vector<Cell> cells;
@@ -1318,6 +1372,8 @@ LibraryPage::LibraryPage (UiContext& c) : ctx (c)
     // opens a show, imports a scene or snippet file or plays a clip.
     list->onFileSelected = [this] (const juce::File&)
     {
+        if (auto* showTab = dynamic_cast<ShowTab*> (tabPages[TabShow]))
+            showTab->refresh();
         if (auto* fx = dynamic_cast<FxTab*> (tabPages[TabFx]))
             fx->refresh();
         if (auto* chan = dynamic_cast<ChanTab*> (tabPages[TabChan]))
@@ -1402,7 +1458,9 @@ std::vector<StatusKey> LibraryPage::getStatusKeys()
     // GLOBAL: an open padlock without global safes, closed (lit) with some.
     const bool safe = anyGlobalSafe();
     // [Fig. 48] a green open padlock, or a red closed one while items are global-safe.
-    return { { "GLOBAL", safe ? Icon::LockClosed : Icon::LockOpen, false, [this] { openGlobal(); }, safe ? Colours::tapRed : Colours::green } };
+    return { { "GLOBAL", safe ? Icon::LockClosed : Icon::LockOpen, false, [this] { openGlobal(); }, safe ? Colours::tapRed : Colours::green },
+             // ADD on the top of the screen (manual 5.6 p. 52): the selected file into the show.
+             { "ADD", Icon::Plus, false, [this] { addItemToShow(); } } };
 }
 
 StatusTitle LibraryPage::getStatusTitle()
@@ -1465,7 +1523,9 @@ void LibraryPage::showTab (int t)
         tabPages[i]->setVisible (i == t);
     list->setTypeFilter (t == TabShow ? 0 : t == TabSnap ? 1 : t == TabSnip ? 2 : -1);
     const juce::String snapFilter = juce::String (Show::sceneFileExtension).trimCharactersAtStart (".") + ";snap"; // WING snapshots too
-    const char* filters[] = { Show::fileExtension, snapFilter.toRawUTF8(), Show::snippetFileExtension, "wav;wave;flac;aif;aiff;aifc;mp3",
+    // SHOW: shows, and the files that can be added to the show (manual 5.6 p. 52: "displayed normally").
+    const juce::String showFilter = "lshow;lsnap;lsnip;lfx;lchn;wav;wave;flac;aif;aiff;aifc;mp3";
+    const char* filters[] = { showFilter.toRawUTF8(), snapFilter.toRawUTF8(), Show::snippetFileExtension, "wav;wave;flac;aif;aiff;aifc;mp3",
                               Show::fxPresetExtension, Show::channelPresetExtension };
     list->setFileFilter (juce::isPositiveAndBelow (t, (int) std::size (filters)) ? filters[t] : "");
     // Presets and clips are files; scenes and snippets live in the show (INT / USB hold their files).
@@ -1665,6 +1725,47 @@ juce::File LibraryPage::selectedWingSnapshot() const
     return file.hasFileExtension ("snap") ? file : juce::File();
 }
 
+int LibraryPage::insertionIndex() const
+{
+    return selectedScene() >= 0 ? selectedScene() + 1 : -1;
+}
+
+void LibraryPage::addItemToShow()
+{
+    const auto file = list->getLocation() != ShowPanel::Location::Show ? list->getSelectedFile() : juce::File();
+    if (! Show::canAddToShow (file))
+    {
+        ctx.log.warning ("ADD ITEM TO SHOW: select a scene, snippet, clip or preset file at INT or USB");
+        return;
+    }
+    const auto* fx = dynamic_cast<FxTab*> (tabPages[TabFx]);
+    addToShow (file, fx != nullptr ? fx->getSlot() : 0);
+}
+
+void LibraryPage::addToShow (const juce::File& file, int fxSlot, std::optional<state::StripRef> strip)
+{
+    auto* selected = ctx.getSelectedStrip ? ctx.getSelectedStrip() : nullptr;
+    if (! strip && selected != nullptr)
+        strip = state::StripRef::of (*selected);
+    juce::String error;
+    const int index = ctx.show.addItem (file, insertionIndex(), fxSlot, strip.value_or (state::StripRef {}), error);
+    if (index < 0)
+    {
+        ctx.log.error (file.getFileName() + ": " + error);
+        return;
+    }
+    const auto scene = ctx.show.getScene (index);
+    juce::String where;
+    if (scene && scene->item == Show::ItemKind::Fx)
+        where = " (loads into " + scene->target + ")";
+    else if (scene && scene->item == Show::ItemKind::Channel && strip)
+        where = " (loads onto " + (selected != nullptr && *strip == state::StripRef::of (*selected) ? selected->getLabel() : strip->toString()) + ")";
+    ctx.log.info ("Added " + file.getFileName() + " to the show as scene " + juce::String (index + 1) + where);
+    list->refresh();
+    list->select ({ index, -1 });
+    refresh();
+}
+
 void LibraryPage::applyWingFile (const juce::File& file)
 {
     juce::String report;
@@ -1690,6 +1791,8 @@ void LibraryPage::applyWingFile (const juce::File& file)
 void LibraryPage::refresh()
 {
     list->refresh();
+    if (auto* showTab = dynamic_cast<ShowTab*> (tabPages[TabShow]))
+        showTab->refresh();
     if (auto* snap = dynamic_cast<SnapTab*> (tabPages[TabSnap]))
         snap->refresh();
     if (auto* snip = dynamic_cast<SnipTab*> (tabPages[TabSnip]))

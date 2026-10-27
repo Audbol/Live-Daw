@@ -218,7 +218,111 @@ const std::optional<Show::Scene> Show::getScene (int index) const
     s.skip = ld::ld_scene_skip (handle, index);
     s.linkNext = ld::ld_scene_link (handle, index);
     s.midi = takeString (ld::ld_scene_midi (handle, index));
+    s.item = static_cast<ItemKind> (juce::jlimit (0, 4, ld::ld_scene_item_kind (handle, index)));
+    if (s.item != ItemKind::Snapshot)
+    {
+        s.origin = takeString (ld::ld_scene_item_text (handle, index, 0));
+        s.target = takeString (ld::ld_scene_item_text (handle, index, 1));
+    }
     return s;
+}
+
+//==============================================================================
+bool Show::canAddToShow (const juce::File& file)
+{
+    return file.hasFileExtension (sceneFileExtension) || file.hasFileExtension (snippetFileExtension) || file.hasFileExtension (fxPresetExtension)
+           || file.hasFileExtension (channelPresetExtension) || file.hasFileExtension ("wav;wave;flac;aif;aiff;aifc;mp3");
+}
+
+int Show::addItem (const juce::File& file, int index, int fxSlot, const state::StripRef& strip, juce::String& error)
+{
+    const Utf8 p (file.getFullPathName());
+    ld::LdString* message = nullptr;
+    const int result = ld::ld_show_add_item (handle, p.data, p.size, index, fxSlot, strip.toC(), &message);
+    error = takeString (message);
+    changed();
+    return result;
+}
+
+int Show::addSnippetScene (const juce::String& snippetName, const state::Scope* scope, bool recorded, int index)
+{
+    const Utf8 u (snippetName);
+    std::vector<ld::StripRefC> refs;
+    ld::ScopeC c {};
+    if (scope != nullptr)
+    {
+        refs = state::toC (scope->strips);
+        c = scope->toC (refs);
+    }
+    const int result = ld::ld_show_add_snippet_scene (handle, engine.getHandle(), u.data, u.size, scope != nullptr ? &c : nullptr, recorded, index);
+    changed();
+    return result;
+}
+
+state::ApplyResult Show::applyLibraryFile (const juce::File& file, juce::String& error)
+{
+    const Utf8 p (file.getFullPathName());
+    ld::ApplyResultC r {};
+    ld::LdString* message = nullptr;
+    const bool ok = ld::ld_show_apply_library (handle, engine.getHandle(), p.data, p.size, &r, &message);
+    error = takeString (message);
+    auto result = state::ApplyResult::fromC (r);
+    if (ok)
+        changed();
+    return result;
+}
+
+Show::StartupResult Show::loadStartupFolder (const juce::File& folder, bool loadPlugins)
+{
+    StartupResult out;
+    if (! folder.isDirectory())
+        return out;
+    // [5.6 p. 52] "including STARTUP at the beginning of the file name": of each type the first by name.
+    auto first = [&folder] (const juce::String& extension)
+    {
+        auto files = folder.findChildFiles (juce::File::findFiles, false, "*" + extension);
+        files.sort();
+        for (const auto& f : files)
+            if (f.getFileName().startsWithIgnoreCase ("STARTUP"))
+                return f;
+        return juce::File();
+    };
+    auto note = [&out] (const juce::File& f, const juce::Result& r)
+    {
+        if (r.wasOk())
+            out.loaded.add (f.getFileName());
+        else
+            out.errors.add (f.getFileName() + ": " + r.getErrorMessage());
+    };
+
+    juce::String report;
+    if (const auto show = first (fileExtension); show != juce::File())
+    {
+        const auto r = loadFromFile (show, loadPlugins);
+        // A plugin that didn't load still leaves the show open.
+        if (r.wasOk() || r.getErrorMessage().startsWith ("Some plugins"))
+            out.showFile = show;
+        note (show, r);
+    }
+    else if (const auto wingShow = first (".show"); wingShow != juce::File())
+        note (wingShow, engine.getWing().importShow (*this, wingShow, report));
+
+    if (const auto scene = first (sceneFileExtension); scene != juce::File())
+    {
+        juce::String error;
+        applyLibraryFile (scene, error);
+        note (scene, error.isEmpty() ? juce::Result::ok() : juce::Result::fail (error));
+    }
+    else if (const auto snap = first (".snap"); snap != juce::File())
+        note (snap, engine.getWing().importSnapshot (snap, report));
+
+    if (const auto snippet = first (snippetFileExtension); snippet != juce::File())
+    {
+        juce::String error;
+        applyLibraryFile (snippet, error);
+        note (snippet, error.isEmpty() ? juce::Result::ok() : juce::Result::fail (error));
+    }
+    return out;
 }
 
 void Show::setSceneTag (int index, int tag)
@@ -300,6 +404,19 @@ state::ApplyResult Show::afterRecall (ld::ApplyResultC& r)
         juce::StringArray lines;
         lines.addLines (midi);
         onSceneMidi (lines);
+    }
+
+    // Clip scenes play their clip on the USB player (as the CLIP tab does); the last one wins.
+    juce::StringArray clips;
+    clips.addLines (takeString (ld::ld_show_take_clips (handle)));
+    clips.removeEmptyStrings();
+    if (! clips.isEmpty())
+    {
+        const juce::File clip (clips[clips.size() - 1]);
+        if (clip.existsAsFile())
+            engine.getUsbRecorder().playFile (clip);
+        else
+            result.warnings.add ("The clip " + clip.getFullPathName() + " is missing");
     }
 
     if (isFading())

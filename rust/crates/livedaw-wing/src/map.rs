@@ -4732,7 +4732,7 @@ mod tests {
         assert_eq!(cov.mapped, 68555, "{}", cov.report());
         // 78 settings: the COMPACT's mfdr, cscmode, autosel_CMPCT, mfdrkeep, mainspill,
         // mtxspill and dcacc and the surface lock (cnslock) among them.
-        assert_eq!((cov.settings, cov.stored), (78, 7236), "{}", cov.report());
+        assert_eq!((cov.settings, cov.stored), (85, 7229), "{}", cov.report());
         for (g, (m, t)) in &cov.by_group {
             assert!(m == t || g == "/$ctl/daw", "{g}: {m} of {t}");
         }

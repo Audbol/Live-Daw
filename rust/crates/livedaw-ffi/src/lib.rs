@@ -37,7 +37,9 @@ use std::sync::Arc;
 // fader twice); ld_layers_add_to_user returns whether it had room.
 // ABI 16: the console model (ld_console_model_info, ld_layers_set_model, ld_wing_set_model).
 // ABI 17: ld_wing_set_black_finish ("wing-bk"); LdSpill kind 5 = a main's sources.
-pub const LD_ABI_VERSION: i32 = 17;
+// ABI 18: show items (ld_scene_item_*, ld_show_add_item, ld_show_add_snippet_scene,
+// ld_show_take_clips, ld_show_apply_library) and ld_rec_set_range (MODE A->B).
+pub const LD_ABI_VERSION: i32 = 18;
 
 fn guard<T>(default: T, f: impl FnOnce() -> T) -> T {
     catch_unwind(AssertUnwindSafe(f)).unwrap_or(default)

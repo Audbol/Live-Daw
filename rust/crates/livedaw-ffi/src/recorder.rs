@@ -4,7 +4,7 @@
 use crate::session::{str_arg, LdString};
 use crate::{engine, guard};
 use livedaw_engine::recorder::{
-    Clip, FadeShape, PlaybackTrack, Playlist, RecordSource, RecordTrackSpec, SourceKind, TransportState,
+    Clip, FadeShape, LoopRange, PlaybackTrack, Playlist, RecordSource, RecordTrackSpec, SourceKind, TransportState,
 };
 use livedaw_engine::Engine;
 use std::path::PathBuf;
@@ -105,6 +105,20 @@ pub unsafe extern "C" fn ld_rec_locate(e: *const Engine, position: i64) {
 pub unsafe extern "C" fn ld_rec_set_loop(e: *const Engine, start: i64, end: i64, enabled: bool) {
     if let Some(e) = engine(e) {
         guard((), || e.recorder().set_loop(start, end, enabled));
+    }
+}
+
+/// The play range by MODE (the WING-LIVE's PLAY, A->B, LOOP; manual 8.1 fig.
+/// 75): 0 = PLAY (plays on), 1 = A->B (stops at `end`), 2 = LOOP (wraps from
+/// `end` to `start`). ABI 18.
+#[no_mangle]
+pub unsafe extern "C" fn ld_rec_set_range(e: *const Engine, start: i64, end: i64, mode: i32) {
+    if let Some(e) = engine(e) {
+        let range = match mode {
+            1 => LoopRange::a_to_b(start, end),
+            m => LoopRange::new(start, end, m == 2),
+        };
+        guard((), || e.recorder().set_range(range));
     }
 }
 
@@ -330,6 +344,11 @@ mod tests {
             ld_rec_set_loop(e, 100, 200, true);
             let (mut s, mut x) = (0, 0);
             assert!(ld_rec_loop(e, &mut s, &mut x) && (s, x) == (100, 200));
+            ld_rec_set_range(e, 100, 300, 1);
+            assert!(!ld_rec_loop(e, &mut s, &mut x) && (s, x) == (100, 300), "A->B doesn't loop");
+            assert!((*e).recorder().loop_range().stops());
+            ld_rec_set_range(e, 100, 200, 2);
+            assert!(ld_rec_loop(e, &mut s, &mut x));
 
             let clip = LdRecClip {
                 path: clip_path.as_ptr(),

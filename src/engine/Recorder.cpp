@@ -29,6 +29,7 @@ void Recorder::stop() { ld::ld_rec_stop (engine); }
 void Recorder::locate (int64_t position) { ld::ld_rec_locate (engine, juce::jmax<int64_t> (0, position)); }
 
 void Recorder::setLoop (int64_t start, int64_t end, bool enabled) { ld::ld_rec_set_loop (engine, start, end, enabled); }
+void Recorder::setRange (int64_t start, int64_t end, PlayMode mode) { ld::ld_rec_set_range (engine, start, end, (int32_t) mode); }
 bool Recorder::isLoopEnabled() const { return ld::ld_rec_loop (engine, nullptr, nullptr); }
 
 int64_t Recorder::getLoopStart() const

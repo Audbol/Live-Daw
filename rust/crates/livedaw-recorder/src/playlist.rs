@@ -111,30 +111,49 @@ pub struct Playlist {
 }
 
 /// The loop range: playback wraps from `end` to `start` when it reaches `end`
-/// from below (a position at or past `end` plays on).
+/// from below (a position at or past `end` plays on). As an A->B range
+/// (`stop_at_end`, the WING-LIVE's MODE A->B, manual 8.1 fig. 75) playback
+/// stops at `end` instead of wrapping.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct LoopRange {
     pub start: i64,
     pub end: i64,
     pub enabled: bool,
+    pub stop_at_end: bool,
 }
 
 impl LoopRange {
     pub fn new(start: i64, end: i64, enabled: bool) -> Self {
-        Self { start: start.max(0), end: end.max(0), enabled }
+        Self { start: start.max(0), end: end.max(0), enabled, stop_at_end: false }
     }
 
+    /// MODE A->B: plays to `end` and stops there.
+    pub fn a_to_b(start: i64, end: i64) -> Self {
+        Self { stop_at_end: true, ..Self::new(start, end, false) }
+    }
+
+    /// Wraps at the end (LOOP).
     pub fn active(&self) -> bool {
-        self.enabled && self.end > self.start
+        self.enabled && !self.stop_at_end && self.end > self.start
     }
 
-    /// How many of the next `n` frames from `pos` play before the wrap.
+    /// Stops at the end (A->B).
+    pub fn stops(&self) -> bool {
+        self.stop_at_end && self.end > self.start
+    }
+
+    /// How many of the next `n` frames from `pos` play before the wrap (or the A->B stop).
     pub fn max_run(&self, pos: i64, n: usize) -> usize {
-        if self.active() && pos < self.end {
+        if (self.active() || self.stops()) && pos < self.end {
             n.min((self.end - pos) as usize)
         } else {
             n
         }
+    }
+
+    /// Whether moving from `from` to `to` reaches an A->B range's end.
+    pub fn reaches_stop(&self, from: i64, to: i64) -> bool {
+        self.stops() && from < self.end && to >= self.end
     }
 
     /// The position after `n` frames from `pos` (wrapping as often as needed).
@@ -461,5 +480,18 @@ mod tests {
         assert_eq!(l.advance(250, 10), 260, "past the end: no wrap");
         assert_eq!(LoopRange::new(100, 200, false).advance(150, 100), 250);
         assert!(!LoopRange::new(200, 100, true).active(), "an empty range never loops");
+    }
+
+    #[test]
+    fn a_to_b_range_stops_at_its_end() {
+        let ab = LoopRange::a_to_b(100, 200);
+        assert!(ab.stops() && !ab.active());
+        assert_eq!(ab.max_run(150, 512), 50, "the chunk ends on B");
+        assert_eq!(ab.advance(150, 50), 200, "no wrap");
+        assert!(ab.reaches_stop(150, 200));
+        assert!(!ab.reaches_stop(200, 260), "started past B: plays on");
+        assert!(!ab.reaches_stop(20, 99));
+        assert!(!LoopRange::new(100, 200, true).reaches_stop(150, 200), "LOOP wraps instead");
+        assert!(!LoopRange::a_to_b(200, 100).stops(), "an empty range never stops");
     }
 }

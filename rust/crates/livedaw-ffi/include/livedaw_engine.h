@@ -28,7 +28,7 @@ static_assert (sizeof (std::atomic<float>) == 4 && std::atomic<float>::is_always
 static_assert (sizeof (std::atomic<bool>) == 1 && std::atomic<bool>::is_always_lock_free);
 static_assert (sizeof (std::atomic<int32_t>) == 4 && std::atomic<int32_t>::is_always_lock_free);
 
-constexpr int kAbiVersion = 17;
+constexpr int kAbiVersion = 18;
 constexpr int kMaxBuses = 16384;
 constexpr int kNumMains = 4;
 constexpr int kNumMatrices = 8;
@@ -1033,6 +1033,22 @@ extern "C"
         the new index, or -1 with `message`. */
     int32_t ld_show_import_library (Show*, const char* path, size_t len, int32_t index, LdString** message);
 
+    // Show items (ABI 18): files added to a show as scenes (manual 5.6 p. 52)
+    /** 0 = a console snapshot, 1 = a snippet, 2 = a clip, 3 = an FX preset, 4 = a channel preset; -1 = no such scene. */
+    int32_t ld_scene_item_kind (Show*, int32_t scene);
+    /** what 0: the file name it was added as; 1: where it loads (the clip's path, "FX 3", "ch:4"). */
+    LdString* ld_scene_item_text (Show*, int32_t scene, int32_t what);
+    /** ADD ITEM TO SHOW: a scene, snippet, clip, FX preset (into `fxSlot`) or channel preset (onto
+        `strip`) file as a scene at `index` (-1: appended); its index, or -1 with `message`. */
+    int32_t ld_show_add_item (Show*, const char* path, size_t len, int32_t index, int32_t fxSlot, StripRefC strip, LdString** message);
+    /** SAVE + ADD on SNIP: a snippet scene at `index` (recorded: the recorded parameters within `scope`,
+        null = all; else what `scope` covers). -1 if there is nothing to save. */
+    int32_t ld_show_add_snippet_scene (Show*, const Engine*, const char* name, size_t len, const ScopeC* scope, bool recorded, int32_t index);
+    /** The clips of the clip scenes the last recall recalled, one path per line; taking them clears them. */
+    LdString* ld_show_take_clips (Show*);
+    /** STARTUP: a scene or snippet file loaded onto the console without joining the show. */
+    bool ld_show_apply_library (Show*, const Engine*, const char* path, size_t len, ApplyResultC* out, LdString** message);
+
     bool ld_show_is_fading (Show*);
     void ld_show_cancel_fade (Show*, const Engine*);
     bool ld_show_tick (Show*, const Engine*);
@@ -1113,6 +1129,8 @@ extern "C"
     void ld_rec_stop (const Engine*);
     void ld_rec_locate (const Engine*, int64_t position);
     void ld_rec_set_loop (const Engine*, int64_t start, int64_t end, bool enabled);
+    /** MODE (ABI 18): 0 = PLAY, 1 = A->B (playback stops at `end`), 2 = LOOP. */
+    void ld_rec_set_range (const Engine*, int64_t start, int64_t end, int32_t mode);
     /** Writes the loop range (pointers may be null); returns whether it is enabled. */
     bool ld_rec_loop (const Engine*, int64_t* start, int64_t* end);
     /** Copies the playlist (the arrays may be freed afterwards). */
