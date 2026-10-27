@@ -68,8 +68,9 @@ enum class ModelBlock : int32_t
 enum class MeterPoint
 {
     Input,    // the raw input (before trim)
-    Trim,     // after trim, balance and polarity (the INPUT screen's "post TRIM" meter)
-    PreFader, // at the PFL point (the METERS screen; "PRE" meter setting)
+    Trim,     // after trim, balance and polarity, before the processing (the INPUT
+              // screen's "post TRIM" meter, the channel strip's LEVEL, the "PRE" meter settings)
+    PreFader, // at the PFL point (after the processing, before the fader)
     Output    // after the fader and pan ("POST" meter setting)
 };
 

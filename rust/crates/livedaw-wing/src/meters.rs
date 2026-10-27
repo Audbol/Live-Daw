@@ -10,8 +10,9 @@
 //! since its last tick (its own copy, [`livedaw_engine::strip::RemotePeaks`];
 //! the UI takes the others) and keeps a level per meter that rises at once and
 //! falls [`RELEASE_DB_PER_S`], the release of Sidecar's own meters
-//! (`src/ui/MeterBallistics.h`), so a remote reads what the console's screens
-//! and surface show.
+//! (`src/ui/MeterBallistics.h`; a WING owner's strip LEDs go dark from -6 dB
+//! in "about 1 second, maybe less"), with no hold, so a remote reads what the
+//! console's screens and surface show.
 
 use crate::map::Console;
 use livedaw_dsp::wing::DYN_MODELS;
@@ -25,7 +26,7 @@ use std::time::{Duration, Instant};
 pub const METER_PERIOD: Duration = Duration::from_millis(50);
 /// How fast a level falls, dB per second (keep in step with
 /// `meters::kReleaseDbPerSecond` in `src/ui/MeterBallistics.h`).
-pub const RELEASE_DB_PER_S: f32 = 24.0;
+pub const RELEASE_DB_PER_S: f32 = 60.0;
 /// The bottom of a level: the lowest word (-128 dB), "-oo".
 pub const FLOOR_DB: f32 = -128.0;
 /// A tick this long after the last one starts the levels over (nobody was
@@ -98,7 +99,7 @@ fn gain_to_db(peak: f32) -> f32 {
     }
 }
 
-/// The input, pre-fader and output levels of a strip, L/R.
+/// The input, PRE (after trim, before the processing) and output levels of a strip, L/R.
 type StripLevels = [[Ballistic; 2]; 3];
 const INPUT: usize = 0;
 const PRE: usize = 1;
@@ -245,7 +246,8 @@ pub fn frame_words(c: &Console, clock: &MeterClock, meters: &[Meter]) -> Vec<i16
                 match op {
                     0xa5 => {
                         // Pre fader L/R, post fader L/R: DCAs carry no signal
-                        // here, so the loudest member's, as the METERS screen.
+                        // here, so the loudest member's, as the METERS screen
+                        // (PRE: after the members' trim, as the meters' PRE tap).
                         let bit = 1u32.checked_shl(i as u32).unwrap_or(0);
                         let mut words = [FLOOR_DB; 4];
                         for kind in StripKind::ALL {
@@ -332,13 +334,20 @@ mod tests {
         let mut b = Ballistic::default();
         // Attack: the first frame with the peak shows it in full.
         assert!((b.advance(0.5, 0.05) + 6.02).abs() < 0.01);
-        // Release: 24 dB/s, frame by frame, whatever the frame rate.
+        // Release: 60 dB/s (a WING's strip LEDs: dark from -6 dB in under
+        // 1 s), frame by frame, whatever the frame rate; no hold.
+        assert_eq!(RELEASE_DB_PER_S, 60.0);
         let mut t = 0.0;
         while t < 0.999 {
             b.advance(0.0, 0.05);
             t += 0.05;
         }
         assert!((b.db - (-6.02 - RELEASE_DB_PER_S)).abs() < 0.05, "{}", b.db);
+        // -6 dB to below the -60 dB LED in 0.9 s (18 frames of 50 ms).
+        let mut c = Ballistic::default();
+        c.advance(0.5, 0.05);
+        let frames = (1..100).find(|_| c.advance(0.0, 0.05) < -60.0).unwrap();
+        assert_eq!(frames, 18);
         // A louder peak meanwhile takes over at once; a quieter one doesn't.
         b.advance(0.1, 0.05);
         assert!((b.db + 20.0).abs() < 0.05, "{}", b.db);

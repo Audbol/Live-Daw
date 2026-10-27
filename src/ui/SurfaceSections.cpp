@@ -447,7 +447,7 @@ juce::String ChannelStripSection::panelState() const
     auto bit = [] (bool b) { return b ? '1' : '0'; };
     for (float thr : kLevelThresholds)
         for (int ch = 0; ch < 2; ++ch)
-            s << bit (dsp::gainToDb (ctx.meters.get (strip, true, ch)) >= thr);
+            s << bit (dsp::gainToDb (ctx.meters.get (strip, MeterPoint::Trim, ch)) >= thr);
     s << juce::roundToInt (strip->meters.dynReductionDb.load()) << bit (slotOn (Input)) << bit (p.filter.lowCut.load())
       << bit (p.filter.highCut.load()) << bit (p.filter.tool.load()) << p.filter.toolModel.load() << bit (p.input.delayOn.load())
       << bit (p.stereo.load()) << bit (strip->isUsingAltInput()) << (int) p.dcaMask.load() << ':' << (int) p.muteGroupMask.load() << ':' << p.postInsert.mode.load();
@@ -604,13 +604,13 @@ void ChannelStripSection::paintPanel (juce::Graphics& g)
         rule (level - W * 0.01f);
     }
 
-    // LEVEL: input level, stereo.
+    // LEVEL: input level after TRIM (TRIM moves it on a WING), stereo.
     {
         title (level, W * 0.085f, "LEVEL");
         const int channels = any ? juce::jlimit (1, 2, strip->getNumChannels()) : 1;
         for (int ch = 0; ch < 2; ++ch)
         {
-            const float db = any ? dsp::gainToDb (ctx.meters.get (strip, true, juce::jmin (ch, channels - 1))) : -200.0f;
+            const float db = any ? dsp::gainToDb (ctx.meters.get (strip, MeterPoint::Trim, juce::jmin (ch, channels - 1))) : -200.0f;
             for (int i = 0; i < 8; ++i)
                 ledAt (level + (float) ch * (led + 3.0f), i, db >= kLevelThresholds[i], leds::meterColour (kLevelThresholds[i]));
         }

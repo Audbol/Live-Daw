@@ -328,20 +328,22 @@ impl DynBandMeters {
 }
 
 /// Peaks (linear, max since the last [`RemotePeaks::take`]) at the points
-/// the WING's meter stream reports: the input, pre-fader (PFL) and output.
-/// One reader (the remote's meter clock) takes them; the UI has its own.
+/// the WING's meter stream reports: the input, PRE (after trim, balance and
+/// polarity, before the processing: the meters' PRE tap, as a WING's strip
+/// meter moves with TRIM and not with the EQ) and output. One reader (the
+/// remote's meter clock) takes them; the UI has its own.
 #[derive(Debug, Default)]
 pub struct RemotePeaks {
     pub input: [AtomicF32; 2],
-    pub pre_fader: [AtomicF32; 2],
+    pub pre: [AtomicF32; 2],
     pub output: [AtomicF32; 2],
 }
 
 impl RemotePeaks {
-    /// Takes the peaks since the last take: (input, pre-fader, output) L/R.
+    /// Takes the peaks since the last take: (input, PRE, output) L/R.
     pub fn take(&self) -> [[f32; 2]; 3] {
         let t = |a: &[AtomicF32; 2]| [a[0].exchange(0.0), a[1].exchange(0.0)];
-        [t(&self.input), t(&self.pre_fader), t(&self.output)]
+        [t(&self.input), t(&self.pre), t(&self.output)]
     }
 }
 
@@ -873,7 +875,9 @@ impl Strip {
         let gains = [trim * db_to_gain(-bal.max(0.0)), trim * db_to_gain(bal.min(0.0))];
         for (ch, &gain) in gains.iter().enumerate().take(nc) {
             apply_gain_ramp(&mut d.work[ch][..n], d.last_in[ch], gain);
-            self.meters.trim_peak[ch].fetch_max(peak_level(&d.work[ch][..n]));
+            let peak = peak_level(&d.work[ch][..n]);
+            self.meters.trim_peak[ch].fetch_max(peak);
+            self.remote_peaks.pre[ch].fetch_max(peak);
         }
         d.last_in = gains;
         // The LR VECTOR SCOPE: after the INPUT block, before pan.
@@ -933,9 +937,7 @@ impl Strip {
         // buses, mains and matrices, the METERS screen).
         for ch in 0..nc {
             d.pfl[ch][..n].copy_from_slice(&d.work[ch][..n]);
-            let peak = peak_level(&d.pfl[ch][..n]);
-            self.meters.pfl_peak[ch].fetch_max(peak);
-            self.remote_peaks.pre_fader[ch].fetch_max(peak);
+            self.meters.pfl_peak[ch].fetch_max(peak_level(&d.pfl[ch][..n]));
         }
         self.tap_at(d, ctx, tap::PFL, n);
 

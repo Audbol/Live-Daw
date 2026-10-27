@@ -1121,7 +1121,7 @@ void MonitorsPage::paintLevel (juce::Graphics& g)
     g.setColour (Dark::body);
     g.fillRect (levelArea);
 
-    // The meter (L R) with the CLIP .. -60 scale, segments lit green, yellow, red.
+    // The meter (L R) with the CLIP .. -60 scale, segments lit as the METERS screen's: green, amber from -18 dB, red.
     auto m = meterArea.toFloat();
     g.setColour (Colours::caption);
     g.setFont (capFont (9.0f));
@@ -1141,7 +1141,7 @@ void MonitorsPage::paintLevel (juce::Graphics& g)
             const float pos = (bar.getBottom() - y) / bar.getHeight();
             const bool lit = pos <= level;
             g.setColour (! lit ? Colours::screenTile
-                               : (pos > meterPos (-0.5f) ? Colours::meterRed : pos > meterPos (-12.0f) ? Colours::meterYellow : Colours::meterGreen));
+                               : (pos > meterPos (-0.5f) ? Colours::mute : pos > meterPos (-18.0f) ? Colours::meterScreenAmber : Colours::meterScreenGreen));
             g.fillRect (bar.getX(), y, bar.getWidth(), segment - wingPx (1.0f));
         }
         g.setColour (Colours::caption);

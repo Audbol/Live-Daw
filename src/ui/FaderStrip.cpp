@@ -480,7 +480,8 @@ void FaderStrip::timerCallback()
 
         // The level before or after the fader, as SETUP > SURFACE > METERING
         // sets for the kind of strip (manual 5.5 p. 47: "the individual LED
-        // meters on each channel can be set to pre- or post-fader").
+        // meters on each channel can be set to pre- or post-fader"); PRE is
+        // after TRIM, before the EQ and dynamics (prefs::tapPoint).
         const int channels = juce::jlimit (1, 2, strip->getNumChannels());
         const auto point = prefs::meterPoint (ctx, strip->getKind());
         for (int ch = 0; ch < 2; ++ch)
@@ -498,7 +499,7 @@ void FaderStrip::timerCallback()
         source = juce::String (d.icon.load()); // repaints when the icon changes
         // DCA METERS: the loudest member, before or after its fader (as the METERS screen).
         const uint32_t bit = 1u << (uint32_t) dca;
-        const auto point = prefs::meterTapPre (ctx, 4) ? MeterPoint::PreFader : MeterPoint::Output;
+        const auto point = prefs::tapPoint (prefs::meterTapPre (ctx, 4));
         std::array<float, 2> peak {};
         for (int k = 0; k < kNumStripKinds; ++k)
             for (auto& s : ctx.engine.getStrips (static_cast<StripKind> (k)))

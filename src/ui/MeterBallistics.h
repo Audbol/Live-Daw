@@ -11,16 +11,21 @@
 
     The manual and the protocol document give no ballistics; WING Edit draws
     the console's meter stream as it comes (no decay or hold of its own), so
-    the console's levels arrive with their ballistics. Sidecar's are the
-    conventional peak meter's: the full peak at once, a fall of
-    kReleaseDbPerSecond, and a peak hold of kHoldSeconds that then falls at the
-    same rate. The Rust meter stream (livedaw-wing meters.rs, RELEASE_DB_PER_S)
-    falls at the same rate. */
+    the console's levels arrive with their ballistics. A WING owner's console:
+    a steady -6 dB tone pulled out leaves the strip LEDs dark in "about 1
+    second, maybe less"; after a drum hit the meters "fall very quickly" (no
+    peak hold on the strips or the main meter); the surface's CLIP "disappears
+    immediately" while the METERS screen holds it about 1 s. So: the full peak
+    at once, a fall of kReleaseDbPerSecond (-6 dB to below the -60 dB LED in
+    0.9 s), no hold on the meters themselves; the METERS screen alone draws a
+    peak-hold mark (holdDb) of kHoldSeconds that then falls at the same rate.
+    The Rust meter stream (livedaw-wing meters.rs, RELEASE_DB_PER_S) falls at
+    the same rate. */
 namespace livedaw::ui::meters
 {
 /** The fall of a level, dB per second. */
-constexpr float kReleaseDbPerSecond = 24.0f;
-/** How long a peak-hold mark stays before it falls. */
+constexpr float kReleaseDbPerSecond = 60.0f;
+/** How long the METERS screen's peak-hold mark (and a held CLIP) stays before it falls. */
 constexpr float kHoldSeconds = 1.0f;
 /** Silence. */
 constexpr float kFloorDb = dsp::kMinusInfDb;

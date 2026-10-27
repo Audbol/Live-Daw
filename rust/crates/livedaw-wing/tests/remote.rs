@@ -628,8 +628,9 @@ fn native_meters_over_udp() {
     }
     assert!((input_l as f32 / 256.0 + 6.02).abs() < 0.1, "{input_l}");
     // Then it falls at the meters' release rate, frame by frame, to "-oo"
-    // (-6 to -128 dB at 24 dB/s: 5 s, about 100 frames; fewer on a slow machine).
-    let (mut last, mut frames) = (input_l, 0);
+    // (60 dB/s, no hold: below -60 dB within about 1 s = 20 frames; -6 to
+    // -128 dB in 2 s, about 40 frames; fewer on a slow machine).
+    let (mut last, mut frames, mut below_60) = (input_l, 0, None);
     let deadline = Instant::now() + Duration::from_secs(20);
     while last != i16::MIN && Instant::now() < deadline {
         udp.recv_from(&mut buf).unwrap();
@@ -637,9 +638,13 @@ fn native_meters_over_udp() {
         assert!(w <= last, "the level rose without a peak: {last} -> {w}");
         last = w;
         frames += 1;
+        if below_60.is_none() && w < -60 * 256 {
+            below_60 = Some(frames);
+        }
     }
     assert_eq!(last, i16::MIN);
     assert!(frames > 10, "fell in {frames} frames");
+    assert!(below_60.is_some_and(|f| f <= 20), "below -60 dB after {below_60:?} frames");
     // Renewal keeps it going.
     let mut renew = vec![0xdf, 0xd3, 0xd4];
     renew.extend(esc(7u16.to_be_bytes()));
