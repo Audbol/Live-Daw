@@ -1,5 +1,6 @@
 #include "TestHelpers.h"
 #include "engine/PluginHost.h"
+#include "engine/PluginScanner.h"
 #include "engine/SandboxedPlugin.h"
 #include "sandbox/TestPlugins.h"
 
@@ -24,6 +25,27 @@ public:
 #else
         setenv (TestPluginFormat::kEnvironmentVariable, "1", 1);
 #endif
+
+        beginTest ("A plugin that hangs the out-of-process scan fails after the timeout; the next scan works");
+        {
+            OutOfProcessScanner scanner (2000);
+            TestPluginFormat format;
+            juce::OwnedArray<juce::PluginDescription> found;
+
+            const auto start = juce::Time::getMillisecondCounterHiRes();
+            expect (! scanner.findPluginTypesFor (format, found, TestPluginFormat::kHangingScanId));
+            const auto elapsed = juce::Time::getMillisecondCounterHiRes() - start;
+            expect (elapsed >= 2000.0 && elapsed < 20000.0, "took " + juce::String (elapsed) + " ms");
+            expect (found.isEmpty());
+
+            // A fresh scanner process takes over.
+            const auto gain = TestPluginFormat::describe (TestPluginFormat::Kind::gain);
+            expect (scanner.findPluginTypesFor (format, found, gain.fileOrIdentifier));
+            expectEquals (found.size(), 1);
+            if (! found.isEmpty())
+                expectEquals (found[0]->fileOrIdentifier, gain.fileOrIdentifier);
+            scanner.scanFinished();
+        }
 
         beginTest ("A missing helper is an error, not a crash");
         {

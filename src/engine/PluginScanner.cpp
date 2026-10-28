@@ -71,7 +71,7 @@ private:
     bool gotResult = false, connectionLost = false, launched = false;
 };
 
-OutOfProcessScanner::OutOfProcessScanner() = default;
+OutOfProcessScanner::OutOfProcessScanner (int timeoutMs) : scanTimeoutMs (timeoutMs) {}
 OutOfProcessScanner::~OutOfProcessScanner() = default;
 
 bool OutOfProcessScanner::findPluginTypesFor (juce::AudioPluginFormat& format,
@@ -100,6 +100,8 @@ bool OutOfProcessScanner::findPluginTypesFor (juce::AudioPluginFormat& format,
         return false;
     }
 
+    const auto deadline = juce::Time::getMillisecondCounterHiRes() + scanTimeoutMs;
+
     for (;;)
     {
         if (shouldExit())
@@ -108,7 +110,15 @@ bool OutOfProcessScanner::findPluginTypesFor (juce::AudioPluginFormat& format,
         auto response = coordinator->getResponse();
 
         if (response.state == Coordinator::State::timeout)
-            continue;
+        {
+            if (juce::Time::getMillisecondCounterHiRes() < deadline)
+                continue;
+
+            // The scanner hung on this plugin. Dropping the connection ends the
+            // scanner (see Worker::handleConnectionLost); report it as failed.
+            coordinator.reset();
+            return false;
+        }
 
         if (response.xml != nullptr)
         {
@@ -142,7 +152,12 @@ namespace
                          private juce::AsyncUpdater
     {
     public:
-        Worker() { juce::addDefaultFormatsToManager (formatManager); }
+        explicit Worker (const std::function<void (juce::AudioPluginFormatManager&)>& addFormats)
+        {
+            juce::addDefaultFormatsToManager (formatManager);
+            if (addFormats)
+                addFormats (formatManager);
+        }
 
         using juce::ChildProcessWorker::initialiseFromCommandLine;
 
@@ -166,7 +181,9 @@ namespace
             }
         }
 
-        void handleConnectionLost() override { juce::JUCEApplicationBase::quit(); }
+        // Exit straight away rather than through the message loop: when a plugin hangs
+        // the scan, the message thread never gets back to the loop to quit.
+        void handleConnectionLost() override { juce::Process::terminate(); }
 
         void handleAsyncUpdate() override
         {
@@ -223,9 +240,10 @@ namespace
     };
 } // namespace
 
-std::unique_ptr<PluginScannerWorker> PluginScannerWorker::tryToStart (const juce::String& commandLine)
+std::unique_ptr<PluginScannerWorker> PluginScannerWorker::tryToStart (const juce::String& commandLine,
+                                                                     const std::function<void (juce::AudioPluginFormatManager&)>& addFormats)
 {
-    auto worker = std::make_unique<Worker>();
+    auto worker = std::make_unique<Worker> (addFormats);
 
     if (worker->initialiseFromCommandLine (commandLine, kScannerProcessId))
         return worker;
