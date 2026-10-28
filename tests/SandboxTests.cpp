@@ -30,20 +30,30 @@ public:
         {
             OutOfProcessScanner scanner (2000);
             TestPluginFormat format;
-            juce::OwnedArray<juce::PluginDescription> found;
+            const auto gain = TestPluginFormat::describe (TestPluginFormat::Kind::gain);
 
-            const auto start = juce::Time::getMillisecondCounterHiRes();
-            expect (! scanner.findPluginTypesFor (format, found, TestPluginFormat::kHangingScanId));
-            const auto elapsed = juce::Time::getMillisecondCounterHiRes() - start;
-            expect (elapsed >= 2000.0 && elapsed < 20000.0, "took " + juce::String (elapsed) + " ms");
-            expect (found.isEmpty());
+            const auto scan = [&] (const juce::String& id, const juce::String& step, juce::OwnedArray<juce::PluginDescription>& found)
+            {
+                const auto start = juce::Time::getMillisecondCounterHiRes();
+                const bool ok = scanner.findPluginTypesFor (format, found, id);
+                const auto ms = juce::Time::getMillisecondCounterHiRes() - start;
+                logMessage (step + ": " + (ok ? "ok" : "failed") + ", " + juce::String (found.size()) + " found in "
+                            + juce::String (juce::roundToInt (ms)) + " ms");
+                return std::pair { ok, ms };
+            };
+
+            juce::OwnedArray<juce::PluginDescription> before, hung, after;
+            expect (scan (gain.fileOrIdentifier, "scan before", before).first, "a plain scan fails");
+            expectEquals (before.size(), 1, "a plain scan");
+
+            const auto [hungOk, hungMs] = scan (TestPluginFormat::kHangingScanId, "hanging scan", hung);
+            expect (! hungOk);
+            expect (hungMs >= 2000.0 && hungMs < 20000.0, "took " + juce::String (hungMs) + " ms");
+            expect (hung.isEmpty());
 
             // A fresh scanner process takes over.
-            const auto gain = TestPluginFormat::describe (TestPluginFormat::Kind::gain);
-            expect (scanner.findPluginTypesFor (format, found, gain.fileOrIdentifier));
-            expectEquals (found.size(), 1);
-            if (! found.isEmpty())
-                expectEquals (found[0]->fileOrIdentifier, gain.fileOrIdentifier);
+            expect (scan (gain.fileOrIdentifier, "scan after", after).first, "the scan after the hang fails");
+            expectEquals (after.size(), 1, "the scan after the hang");
             scanner.scanFinished();
         }
 
