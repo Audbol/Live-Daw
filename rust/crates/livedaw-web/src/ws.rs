@@ -181,8 +181,9 @@ impl<R: Read> Reader<R> {
             if control && (len > 125 || !fin) {
                 return Err(invalid("bad control frame"));
             }
+            // checked_add: a 64-bit length near u64::MAX must not wrap past the limit.
             let buffered = self.partial.as_ref().map_or(0, |p| p.1.len()) as u64;
-            if len + buffered > MAX_MESSAGE as u64 {
+            if len.checked_add(buffered).is_none_or(|total| total > MAX_MESSAGE as u64) {
                 return Err(invalid("message too big"));
             }
             let mut mask = [0u8; 4];
@@ -300,5 +301,16 @@ pub(crate) mod tests {
         assert!(Reader::new(&big[..]).read().is_err());
         let long_ping = client_frame(9, true, &[0; 126]);
         assert!(Reader::new(&long_ping[..]).read().is_err());
+    }
+
+    /// A continuation whose 64-bit length plus what is buffered overflows: an error,
+    /// not a wrapped sum under MAX_MESSAGE and then a panic allocating the payload.
+    #[test]
+    fn refuses_a_length_that_overflows_with_the_buffered_part() {
+        let mut frames = client_frame(1, false, b"abc");
+        frames.extend_from_slice(&[0x00, 0x80 | 127]);
+        frames.extend_from_slice(&(u64::MAX - 1).to_be_bytes());
+        frames.extend_from_slice(&[0; 4]);
+        assert!(Reader::new(&frames[..]).read().is_err());
     }
 }
