@@ -12,8 +12,8 @@ use crate::http::{self, Route};
 use crate::input::{self, Decoded, Event, Queue};
 use crate::screen::{Screen, View, MSG_PONG};
 use crate::ws::{self, Message, Opcode};
-use std::collections::VecDeque;
-use std::io::{ErrorKind, Write};
+use std::collections::{HashMap, VecDeque};
+use std::io::{self, ErrorKind, Read, Write};
 use std::net::{IpAddr, Ipv4Addr, Shutdown, SocketAddr, TcpListener, TcpStream};
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard};
@@ -23,6 +23,13 @@ use std::time::{Duration, Instant};
 pub const DEFAULT_PORT: u16 = 8080;
 /// Browsers connected at once (with or without the PIN yet).
 pub const MAX_CLIENTS: usize = 8;
+/// Browsers from one address that have not entered the PIN yet, so one address
+/// can't take every slot.
+pub const MAX_WAITING_PER_ADDR: usize = 2;
+/// Connections still sending their request, from one address and from all;
+/// more are closed straight away.
+pub const MAX_PENDING_PER_ADDR: usize = 8;
+pub const MAX_PENDING: usize = 64;
 /// Frames a browser may have unacknowledged.
 pub const MAX_IN_FLIGHT: u32 = 2;
 /// A browser that acknowledges nothing for this long gets frames again (in
@@ -30,7 +37,7 @@ pub const MAX_IN_FLIGHT: u32 = 2;
 pub const ACK_TIMEOUT: Duration = Duration::from_secs(3);
 /// A browser that has not entered the PIN by then is dropped.
 pub const AUTH_TIMEOUT: Duration = Duration::from_secs(120);
-/// How long a browser may take to send its request.
+/// How long a browser may take to send its request (all of it, not each read).
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
 /// A browser that takes longer than this to accept a frame is dropped.
 const WRITE_TIMEOUT: Duration = Duration::from_secs(10);
@@ -123,6 +130,8 @@ struct Shared {
     input: Mutex<Queue>,
     stop: AtomicBool,
     next_id: AtomicU32,
+    /// Connections still sending their request, by address.
+    pending: Mutex<HashMap<IpAddr, usize>>,
     bytes_sent: AtomicU64,
     frames_sent: AtomicU64,
 }
@@ -151,6 +160,7 @@ impl WebServer {
             input: Mutex::new(Queue::default()),
             stop: AtomicBool::new(false),
             next_id: AtomicU32::new(1),
+            pending: Mutex::new(HashMap::new()),
             bytes_sent: AtomicU64::new(0),
             frames_sent: AtomicU64::new(0),
         });
@@ -245,8 +255,11 @@ fn listen(shared: &Arc<Shared>, listener: &TcpListener) {
     while !shared.stop.load(Ordering::Relaxed) {
         match listener.accept() {
             Ok((stream, peer)) => {
-                let s = shared.clone();
-                let _ = std::thread::Builder::new().name("web-client".into()).spawn(move || serve(&s, stream, peer));
+                // Too many connections still sending their request: close this one.
+                if let Some(pending) = Pending::new(shared, peer.ip()) {
+                    let s = shared.clone();
+                    let _ = std::thread::Builder::new().name("web-client".into()).spawn(move || serve(&s, stream, peer, pending));
+                }
             }
             Err(e) if e.kind() == ErrorKind::WouldBlock => std::thread::sleep(Duration::from_millis(20)),
             Err(_) => std::thread::sleep(Duration::from_millis(100)),
@@ -260,13 +273,63 @@ fn listen(shared: &Arc<Shared>, listener: &TcpListener) {
     }
 }
 
+/// Counts a connection as pending (still sending its request) until dropped.
+struct Pending {
+    shared: Arc<Shared>,
+    ip: IpAddr,
+}
+
+impl Pending {
+    /// None when the address, or everybody together, has too many pending.
+    fn new(shared: &Arc<Shared>, ip: IpAddr) -> Option<Self> {
+        let mut pending = lock(&shared.pending);
+        if pending.values().sum::<usize>() >= MAX_PENDING || pending.get(&ip).is_some_and(|n| *n >= MAX_PENDING_PER_ADDR) {
+            return None;
+        }
+        *pending.entry(ip).or_default() += 1;
+        Some(Self { shared: shared.clone(), ip })
+    }
+}
+
+impl Drop for Pending {
+    fn drop(&mut self) {
+        let mut pending = lock(&self.shared.pending);
+        if let Some(n) = pending.get_mut(&self.ip) {
+            *n -= 1;
+            if *n == 0 {
+                pending.remove(&self.ip);
+            }
+        }
+    }
+}
+
+/// Reads with one deadline for everything, so a browser sending a byte now and
+/// then can't hold the connection past REQUEST_TIMEOUT.
+struct Deadline<'a> {
+    stream: &'a TcpStream,
+    until: Instant,
+}
+
+impl Read for Deadline<'_> {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        let left = self.until.saturating_duration_since(Instant::now());
+        if left.is_zero() {
+            return Err(ErrorKind::TimedOut.into());
+        }
+        self.stream.set_read_timeout(Some(left))?;
+        let mut stream = self.stream;
+        stream.read(buf)
+    }
+}
+
 /// One connection: an HTTP request, then maybe a WebSocket.
-fn serve(shared: &Arc<Shared>, mut stream: TcpStream, peer: SocketAddr) {
+fn serve(shared: &Arc<Shared>, mut stream: TcpStream, peer: SocketAddr, pending: Pending) {
     let _ = stream.set_nonblocking(false);
     let _ = stream.set_nodelay(true);
-    let _ = stream.set_read_timeout(Some(REQUEST_TIMEOUT));
     let _ = stream.set_write_timeout(Some(WRITE_TIMEOUT));
-    let Ok(Some(req)) = http::read_request(&mut stream) else { return };
+    let request = http::read_request(&mut Deadline { stream: &stream, until: Instant::now() + REQUEST_TIMEOUT });
+    drop(pending);
+    let Ok(Some(req)) = request else { return };
     match http::route(&req) {
         Route::Asset(a) => {
             let _ = stream.write_all(&http::response(200, "OK", a.content_type, a.body, req.method == "HEAD"));
@@ -279,6 +342,12 @@ fn serve(shared: &Arc<Shared>, mut stream: TcpStream, peer: SocketAddr) {
         Route::WebSocket => {
             if shared.stop.load(Ordering::Relaxed) || lock(&shared.clients).len() >= MAX_CLIENTS {
                 let _ = stream.write_all(&http::error_response(503, "Service Unavailable"));
+                return;
+            }
+            let waiting_here =
+                lock(&shared.clients).iter().filter(|c| c.addr.ip() == peer.ip() && !c.watching.load(Ordering::Relaxed)).count();
+            if waiting_here >= MAX_WAITING_PER_ADDR {
+                let _ = stream.write_all(&http::error_response(429, "Too Many Requests"));
                 return;
             }
             let key = req.header("Sec-WebSocket-Key").unwrap_or_default().to_string();
@@ -303,6 +372,8 @@ fn websocket(shared: &Arc<Shared>, stream: TcpStream, peer: SocketAddr) {
         wake: Condvar::new(),
     });
     lock(&shared.clients).push(client.clone());
+    // Frees the slot however this thread ends, a panic included.
+    let leave = Leave { shared, client: &client };
     client.text(&format!("{{\"t\":\"hello\",\"pin\":{needs_pin},\"viewOnly\":{}}}", shared.view_only));
 
     let writer_thread = {
@@ -311,10 +382,22 @@ fn websocket(shared: &Arc<Shared>, stream: TcpStream, peer: SocketAddr) {
     };
     read_loop(shared, &client, reader);
 
-    client.close();
-    lock(&shared.clients).retain(|c| !Arc::ptr_eq(c, &client));
+    drop(leave);
     if let Ok(h) = writer_thread {
         let _ = h.join();
+    }
+}
+
+/// Closes a browser's connection and removes it from the clients when dropped.
+struct Leave<'a> {
+    shared: &'a Shared,
+    client: &'a Arc<Client>,
+}
+
+impl Drop for Leave<'_> {
+    fn drop(&mut self) {
+        self.client.close();
+        lock(&self.shared.clients).retain(|c| !Arc::ptr_eq(c, self.client));
     }
 }
 
@@ -651,5 +734,89 @@ mod tests {
         let mut rest = Vec::new();
         let _ = b.stream.read_to_end(&mut rest);
         assert!(s.status().clients.is_empty());
+    }
+
+    /// The status line a WebSocket request gets.
+    fn upgrade_status(s: &WebServer) -> String {
+        let mut c = TcpStream::connect(s.addr().unwrap()).unwrap();
+        c.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+        c.write_all(b"GET /ws HTTP/1.1\r\nHost: x\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n").unwrap();
+        let mut buf = [0u8; 64];
+        let n = c.read(&mut buf).unwrap_or(0);
+        String::from_utf8_lossy(&buf[..n]).lines().next().unwrap_or("").to_string()
+    }
+
+    #[test]
+    fn one_address_has_two_browsers_waiting_for_the_pin_at_most() {
+        let s = start("1357", false);
+        let mut a = Browser::connect(&s);
+        let _b = Browser::connect(&s);
+        assert!(upgrade_status(&s).starts_with("HTTP/1.1 429"));
+        // Once one has entered the PIN, another may wait.
+        assert!(a.text().contains("\"pin\":true"));
+        a.send(1, b"pin:1357");
+        assert_eq!(a.text(), "{\"t\":\"ok\"}");
+        assert!(upgrade_status(&s).starts_with("HTTP/1.1 101"));
+    }
+
+    /// Every slot taken by a browser that sends an overflowing frame length comes back.
+    #[test]
+    fn a_frame_with_an_overflowing_length_frees_its_slot() {
+        let s = start("", false);
+        for _ in 0..MAX_CLIENTS {
+            let mut b = Browser::connect(&s);
+            let mut frames = client_frame(1, false, b"abc");
+            frames.extend_from_slice(&[0x00, 0x80 | 127]);
+            frames.extend_from_slice(&(u64::MAX - 1).to_be_bytes());
+            frames.extend_from_slice(&[0; 4]);
+            b.stream.write_all(&frames).unwrap();
+            let mut rest = Vec::new();
+            let _ = b.stream.read_to_end(&mut rest);
+        }
+        wait_until(|| s.status().clients.is_empty());
+        let _ = Browser::connect(&s);
+    }
+
+    #[test]
+    fn one_address_has_a_few_requests_pending_at_most() {
+        let s = start("", false);
+        let idle: Vec<TcpStream> = (0..MAX_PENDING_PER_ADDR).map(|_| TcpStream::connect(s.addr().unwrap()).unwrap()).collect();
+        wait_until(|| lock(&s.shared.pending).values().sum::<usize>() == MAX_PENDING_PER_ADDR);
+        // One more is closed without an answer.
+        let mut extra = TcpStream::connect(s.addr().unwrap()).unwrap();
+        extra.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+        let _ = extra.write_all(b"GET / HTTP/1.1\r\nHost: x\r\n\r\n");
+        let mut buf = [0u8; 16];
+        assert!(matches!(extra.read(&mut buf), Ok(0) | Err(_)));
+        drop(idle);
+        wait_until(|| lock(&s.shared.pending).is_empty());
+        assert!(get(&s, "GET / HTTP/1.1\r\nHost: x\r\n\r\n").starts_with("HTTP/1.1 200"));
+    }
+
+    /// REQUEST_TIMEOUT is for the whole request: a byte now and then doesn't extend it.
+    #[test]
+    fn a_request_sent_a_byte_at_a_time_is_dropped_after_the_timeout() {
+        let s = start("", false);
+        let mut c = TcpStream::connect(s.addr().unwrap()).unwrap();
+        let t = Instant::now();
+        let mut closed = false;
+        while t.elapsed() < REQUEST_TIMEOUT + Duration::from_secs(5) {
+            if c.write_all(b"G").is_err() {
+                closed = true;
+                break;
+            }
+            c.set_read_timeout(Some(Duration::from_secs(1))).unwrap();
+            let mut b = [0u8; 1];
+            match c.read(&mut b) {
+                Err(e) if e.kind() == ErrorKind::WouldBlock || e.kind() == ErrorKind::TimedOut => {}
+                Ok(n) if n > 0 => panic!("an answer to a partial request"),
+                _ => {
+                    closed = true;
+                    break;
+                }
+            }
+        }
+        assert!(closed, "still open after {:?}", t.elapsed());
+        assert!(t.elapsed() < REQUEST_TIMEOUT + Duration::from_secs(3));
     }
 }
