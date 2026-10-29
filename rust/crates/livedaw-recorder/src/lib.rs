@@ -57,8 +57,14 @@ pub const SAMPLES_PER_PEAK: usize = 256;
 
 /// Seconds of audio each playback ring holds ahead of the play position.
 pub const PLAYBACK_BUFFER_SECONDS: f64 = 2.0;
-/// Seconds of audio the record ring holds for the writer.
-pub const RECORD_BUFFER_SECONDS: f64 = 4.0;
+/// Seconds of audio the record ring holds for the writer: enough to ride out
+/// a disk that stalls while something else on the computer uses it.
+pub const RECORD_BUFFER_SECONDS: f64 = 30.0;
+/// The record ring is shorter when 30 seconds would take more memory than
+/// this (many tracks at high sample rates)...
+pub const RECORD_BUFFER_MAX_BYTES: usize = 1 << 30;
+/// ...but never shorter than this.
+pub const RECORD_BUFFER_MIN_SECONDS: f64 = 4.0;
 /// Rolling starts once this much is buffered.
 pub const PRIME_SECONDS: f64 = 0.25;
 /// Fade-in/out of playback on start, stop and locate (samples).
@@ -390,6 +396,14 @@ fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
     m.lock().unwrap_or_else(|e| e.into_inner())
 }
 
+/// Frames of the record ring for `streams` mono streams.
+fn record_capacity(sample_rate: f64, streams: usize, max_block: usize) -> usize {
+    let wanted = (RECORD_BUFFER_SECONDS * sample_rate) as usize;
+    let affordable = RECORD_BUFFER_MAX_BYTES / (streams.max(1) * std::mem::size_of::<f32>());
+    let least = (RECORD_BUFFER_MIN_SECONDS * sample_rate) as usize;
+    wanted.min(affordable).max(least).max(16 * max_block)
+}
+
 // ---- the recorder ----------------------------------------------------------------------
 
 struct Control {
@@ -618,7 +632,7 @@ impl Recorder {
             streams.extend((0..t.num_channels).map(|channel| RecordStream { source: t.source, channel }));
         }
         let max_block = self.shared.max_block.load(Relaxed);
-        let capacity = ((RECORD_BUFFER_SECONDS * sample_rate) as usize).max(16 * max_block);
+        let capacity = record_capacity(sample_rate, streams.len(), max_block);
         let session = Arc::new(RecordSession {
             ring: Ring::new(streams.len(), capacity),
             gaps: SpscQueue::new(1024),
@@ -786,5 +800,25 @@ impl Drop for Recorder {
         for t in threads {
             let _ = t.join();
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_record_ring_holds_30_seconds_within_its_memory_cap() {
+        // 64 stereo tracks at 48 kHz: 30 seconds fit (about 740 MB).
+        assert_eq!(record_capacity(48000.0, 128, 512), 30 * 48000);
+        // At higher rates the cap shortens it (about 22 s at 96 kHz, 11 s at 192 kHz).
+        for rate in [96000.0, 192000.0] {
+            let c = record_capacity(rate, 128, 512);
+            assert!(c < (30.0 * rate) as usize && c * 128 * 4 <= RECORD_BUFFER_MAX_BYTES, "{c}");
+        }
+        // It never goes under 4 seconds, whatever the memory.
+        assert_eq!(record_capacity(192000.0, 4096, 512), 4 * 192000);
+        // A few tracks always get 30 seconds.
+        assert_eq!(record_capacity(192000.0, 2, 512), 30 * 192000);
     }
 }
