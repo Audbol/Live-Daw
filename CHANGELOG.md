@@ -5,6 +5,18 @@ All notable changes to Sidecar are listed here. Versions follow
 
 ## [Unreleased]
 
+## [0.1.6] - beta
+
+The fourth round of matching Sidecar to a real WING, cross-checked against WING Edit
+3.3.4, the WING manual (2025-10-20) and the remote protocols document, with answers
+from an owner of a full-size WING and a WING COMPACT: the WING COMPACT is a second
+console model with its own surface, keys and custom control sets; every effect was
+measured against its original, and its page's meters, needles, gain reduction and
+spectrum move with the signal; the routing gains user signals and patches, inputs
+straight to outputs and live meters; meters use the WING's ballistics; the EXTERNAL
+effect inserts outboard gear; the multitrack editor can keep imported files where
+they are. The README has use cases and new screenshots.
+
 ### Added
 
 - **The meters on the reverb, delay, modulation and pitch pages move with the
@@ -520,6 +532,9 @@ All notable changes to Sidecar are listed here. Versions follow
   channel).
 ### Fixed
 
+- The multitrack editor's tracks showed a raw source number as their input after
+  RECORD ALL CHANNELS from a channel patched to anything but a local input ("IN
+  196609"); they show the source as ROUTING labels it ("IN OSC 1", "IN LCL 3").
 - On Windows, stopping the WING remote (or quitting) with WING Edit or another
   Native client connected took two minutes: a shutdown doesn't end a blocked
   receive there. The Native reader on Windows now doesn't block and looks for

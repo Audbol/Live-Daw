@@ -15,22 +15,60 @@ anything can be sent to any hardware output. It runs on Windows, macOS and Linux
 > SETUP > GENERAL > ABOUT, lists the differences). Don't rely on it for a critical
 > live show without testing it thoroughly first.
 
-**Status: v0.1.5 beta**, the fifth public beta: the third round of matching a real WING, from its factory parameter dump and screenshots. Expect rough edges, and please
-[report what you find](#reporting-problems).
+**Status: v0.1.6 beta**, the sixth public beta: the WING COMPACT as a second console
+model, every effect measured against its WING original with live meters on its page,
+and the routing, monitoring and custom controls checked against WING Edit 3.3.4 and
+the WING manual. Expect rough edges, and please [report what you find](#reporting-problems).
+
+![The full-size console: the HOME screen of a channel, the channel strip, fader sections with the input list on the left and DCAs in the middle, all metering a signal](docs/images/console.png)
+
+## Use cases
+
+- **A console for small shows and rehearsals.** A laptop and a multichannel audio
+  interface become a full mixer: a band's rehearsal room, a church service, a school
+  play, a conference room or a club night, with the WING's processing on every
+  channel and its effects rack.
+- **Learning the WING, and training a team.** The screens, layers, keys and workflow
+  are the WING's, full-size or COMPACT, so engineers and volunteers can practise on
+  any computer, with the **Virtual (no hardware)** device and the WING's oscillator
+  when there is no interface at hand.
+- **Preparing a show before the gig.** Patch, name, colour, set up processing,
+  effects, scenes and custom controls at home; WING Edit and other WING remote apps
+  connect to Sidecar as they would to the console.
+- **A second mixer next to the main console.** Monitors, a broadcast or livestream
+  mix, an overflow room or a recording mix, fed from a split of the stage inputs.
+- **Multitrack recording and virtual soundcheck.** Record every channel of a show,
+  play it back through the console the next day to refine the mix without the band,
+  and edit, import and export the tracks in the built-in multitrack editor.
+- **Mixing with your plugins and your outboard gear.** VST3, AU and LV2 plugins sit
+  in the FX rack next to the WING's effects, and the EXTERNAL effect puts a hardware
+  compressor or reverb on an insert through the interface's outputs and inputs.
+- **Remote mixing from a tablet or phone.** The web remote shows the console's
+  screen in a browser on the network; MIDI controllers and Mackie Control / HUI
+  surfaces drive it too.
+
+Sidecar is a hobby project, not a replacement for a tested console: try it well before
+relying on it at a show (see [Known limitations](#known-limitations)).
 
 ## Screenshots
 
-![The Sidecar console: fader sections, the main display with the HOME screen, the channel strip and monitoring sections](docs/images/console.png)
-
-![An FX rack device (Vintage Plate) on its faceplate, display-only mode](docs/images/effects.png)
-
-![The multitrack recorder screen after RECORD ALL CHANNELS](docs/images/recorder.png)
+| | |
+|---|---|
+| ![The WING COMPACT model: the black surface with one 12-fader section, the main display, the BUS / DCA / MAIN MATRIX / USER keys and the monitoring section](docs/images/compact.png) | ![The METERS screen: channels, buses, DCAs, mains and matrices metering a signal](docs/images/meters.png) |
+| **WING COMPACT**: SETUP > GENERAL > CONSOLE MODEL | **METERS**: every strip at a glance |
+| ![The EFFECTS rack: reverbs, delay and chorus in the premium slots, COMBINATOR, PSYCHO BASS, MASTER and LIMITER in the standard slots, two of them inserted on channels](docs/images/fx-rack.png) | ![PSYCHO BASS on its faceplate, inserted on the bass DI, its VU needles moving with the signal](docs/images/effects.png) |
+| **EFFECTS**: the WING's 16-slot rack | **Faceplates** with live meters |
+| ![The recorder screen recording 40 channels, with the input levels and the tracks armed](docs/images/recorder.png) | ![The multitrack editor with the recording: one track per channel, waveforms in the channels' colours](docs/images/editor.png) |
+| **Recorder**: RECORD ALL CHANNELS | **Multitrack editor** (Ctrl+E) |
 
 ## What it does
 
 - **A WING console:** 40 input channels, 8 aux, 16 stereo buses, 4 stereo mains,
   8 matrices, 16 DCAs, 8 mute groups and 16 FX slots. More channels and buses can be
   added; the limit is your CPU.
+- **Two console models:** the full-size WING (grey or black) and the **WING COMPACT**
+  (one 12-fader section with its own BUS, DCA, MAIN / MATRIX and USER keys, the
+  VIRTUAL section and its custom control sets), chosen in SETUP > GENERAL > CONSOLE.
 - **The WING's processing**, in its order and with its process orders: input (trim,
   polarity, delay), filters, a gate and a dynamics slot with the WING's 32 dynamics
   models, the WING EQ and its analog EQ models, two inserts and sends with all of the
@@ -38,23 +76,34 @@ anything can be sent to any hardware output. It runs on Windows, macOS and Linux
 - **An FX rack** with the WING's devices: 26 premium effects (reverbs, delays,
   chorus, pitch...), 32 standard effects (EQs, dynamics, amps, modulation...), 5
   channel strips, VST3, AU (macOS) and LV2 (Linux) plugins, and the WING's EXTERNAL
-  effect: outboard gear inserted through your interface's outputs and inputs.
+  effect: outboard gear inserted through your interface's outputs and inputs. Each
+  device has its faceplate, and its meters, needles, gain reduction and spectrum move
+  with the signal.
 - **The WING surface on screen:** three fader sections with layers, user layers and
-  spill, the main display with the WING's screens (HOME, EFFECTS, METERS, ROUTING,
-  SETUP, LIBRARY, VIEW, UTILITY), the channel strip, monitoring, 4-Channel and custom
-  control sections. It resizes to any screen; the display can be shown on its own.
-- **Shows, scenes and snippets** with recall scope, recall safes, fades and presets;
-  scenes and snippets can be exported to files and imported into another show.
+  spill (DCA, bus, main and matrix), the main display with the WING's screens (HOME,
+  EFFECTS, METERS, ROUTING, SETUP, LIBRARY, VIEW, UTILITY), the channel strip,
+  monitoring, 4-Channel and custom control sections, with the WING's meter ballistics.
+  It resizes to any screen; the display can be shown on its own.
+- **The WING's routing:** any source to any channel or output, inputs straight to
+  outputs, buses, mains and matrices as channel sources, user signals and user
+  patches, bus to bus, and live meters on the ROUTING tiles.
+- **Shows, scenes and snippets** with recall scope, recall safes, global safes, fades,
+  presets and STARTUP files; scenes and snippets can be exported to files and imported
+  into another show.
 - **Multitrack recording** of up to 64 tracks, playback into the console (virtual
-  soundcheck) and a built-in multitrack editor; the WING's **2/4-track USB recorder
-  and player** using a folder on disk.
+  soundcheck) and a built-in multitrack editor that imports audio files (copied into
+  the project or kept where they are) and exports its tracks as audio files; the WING's
+  **2/4-track USB recorder and player** using a folder on disk.
 - **Monitoring and talkback:** phones and speakers paths with their own sources, EQ,
   delay and limiter, and two talk keys. The WING's **oscillator** (sine, pink and white
   noise) is a source group to patch to channels for line checks.
-- **MIDI remote control and DAW remote control** (Mackie Control / HUI) as on the WING.
+- **Custom controls** with the WING's functions (fader start, inserts, DAW layer,
+  tap tempo, mute groups, scenes, the recorders...), **MIDI remote control** and **DAW
+  remote control** (Mackie Control / HUI) as on the WING.
 - **WING remote apps and files (experimental):** Sidecar answers the WING's network
-  protocols (discovery, OSC and the native protocol), so WING remote software can
-  find and drive it, and it imports and exports WING snapshots.
+  protocols (discovery, OSC and the native protocol) and reports itself as a full-size
+  WING or a COMPACT, so WING remote software such as WING Edit can find and drive it;
+  it imports and exports WING snapshots.
 - **Web remote:** open the console's screen in a browser on a tablet, phone or another
   computer on the network and control it from there (optional PIN).
 - **Built for stability:** a realtime engine in Rust with no allocations or locks on

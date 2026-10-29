@@ -1,4 +1,5 @@
 #include "ui/daw/DawTracks.h"
+#include "ui/RoutingGroups.h"
 
 namespace livedaw::ui
 {
@@ -127,7 +128,8 @@ void DawTrackHeader::paint (juce::Graphics& g)
     paintKey (g, soloKey, "S", t->solo, DawColours::solo);
 
     const bool hardware = t->source.kind == Recorder::Source::Kind::HardwareInput;
-    paintField (g, sourceKey, hardware ? "IN" : "SRC", hardware ? juce::String (t->source.port + 1) : daw::describeSource (t->source));
+    // An input is a source of the console's table (RECORD ALL CHANNELS takes each channel's): "LCL 3", "OSC 1".
+    paintField (g, sourceKey, hardware ? "IN" : "SRC", hardware ? routing::sourceLabel (t->source.port) : daw::describeSource (t->source));
     const juce::String pb = t->stereo ? juce::String (t->playChannel + 1) + "-" + juce::String (t->playChannel + 2) : juce::String (t->playChannel + 1);
     paintField (g, playbackKey, "PB", pb);
     paintField (g, gainKey, "GAIN", t->gainDb <= -60.0f ? juce::String ("-inf") : (t->gainDb > 0.0f ? "+" : "") + juce::String (t->gainDb, 1));
