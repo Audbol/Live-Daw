@@ -15,6 +15,7 @@ class TestPluginFormat final : public juce::AudioPluginFormat
 public:
     static constexpr const char* kFormatName = "SidecarTest";
     static constexpr const char* kEnvironmentVariable = "SIDECAR_SANDBOX_TEST_PLUGINS";
+    static constexpr const char* kHangingScanId = "sidecar-test:hang-scan"; // findAllTypesForFile never returns
 
     enum class Kind
     {

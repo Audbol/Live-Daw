@@ -145,6 +145,10 @@ bool TestPluginFormat::isEnabledByEnvironment()
 
 void TestPluginFormat::findAllTypesForFile (juce::OwnedArray<juce::PluginDescription>& results, const juce::String& id)
 {
+    if (id == kHangingScanId)
+        for (;;)
+            juce::Thread::sleep (1000);
+
     for (auto kind : { Kind::gain, Kind::crash, Kind::hang })
         if (describe (kind).fileOrIdentifier == id)
             results.add (new juce::PluginDescription (describe (kind)));

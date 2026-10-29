@@ -1,4 +1,5 @@
 #include "engine/PluginScanner.h"
+#include "sandbox/TestPlugins.h"
 
 #include <juce_core/juce_core.h>
 #include <juce_events/juce_events.h>
@@ -32,7 +33,13 @@ int main (int argc, char** argv)
         for (int i = 1; i < argc; ++i)
             args.add (argv[i]);
 
-        if (auto worker = livedaw::PluginScannerWorker::tryToStart (args.joinIntoString (" ")))
+        const auto addTestFormat = [] (juce::AudioPluginFormatManager& formats)
+        {
+            if (livedaw::sandbox::TestPluginFormat::isEnabledByEnvironment())
+                formats.addFormat (std::make_unique<livedaw::sandbox::TestPluginFormat>());
+        };
+
+        if (auto worker = livedaw::PluginScannerWorker::tryToStart (args.joinIntoString (" "), addTestFormat))
         {
             juce::MessageManager::getInstance()->runDispatchLoop();
             return 0;
