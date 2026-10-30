@@ -329,7 +329,7 @@ fn node_set(shared: &Shared, base: Node, text: &str, origin: Origin) -> Result<(
 }
 
 /// Splits `/%<port>` off an address.
-fn reply_port(addr: &str) -> (Option<u16>, &str) {
+pub(crate) fn reply_port(addr: &str) -> (Option<u16>, &str) {
     if let Some(rest) = addr.strip_prefix("/%") {
         let digits = rest.bytes().take_while(u8::is_ascii_digit).count();
         if digits > 0 {

@@ -210,6 +210,59 @@ fn osc_subscriptions_push_changes_from_anywhere() {
     assert_eq!(got.unwrap().args, vec![Arg::Str("Vox".into())]);
 }
 
+/// A client that sends each request from a new port and asks the replies on
+/// its `/%<port>` is one client, holds one subscription, and isn't sent its
+/// own changes back.
+#[test]
+fn osc_client_is_where_its_replies_go() {
+    let (_e, server) = start();
+    let to = server.status().osc.unwrap();
+    let listen = UdpSocket::bind("127.0.0.1:0").unwrap();
+    listen.set_read_timeout(Some(Duration::from_millis(500))).unwrap();
+    let port = listen.local_addr().unwrap().port();
+    let send = |m: &Message| {
+        let mut m = m.clone();
+        m.addr = format!("/%{port}{}", m.addr);
+        UdpSocket::bind("127.0.0.1:0").unwrap().send_to(&osc::encode(&m), to).unwrap();
+    };
+    // Everything pushed to it until it goes quiet.
+    let events = || {
+        let mut buf = [0u8; 65536];
+        std::iter::from_fn(|| listen.recv_from(&mut buf).ok().and_then(|(n, _)| osc::decode(&buf[..n]))).collect::<Vec<_>>()
+    };
+    for _ in 0..3 {
+        send(&Message::new("/*S", vec![]));
+    }
+    std::thread::sleep(Duration::from_millis(300)); // the poller takes its first snapshot
+    let clients = server.status().clients;
+    assert_eq!(clients.len(), 1, "{clients:?}");
+    assert_eq!((clients[0].addr, clients[0].subscribed), (SocketAddr::from(([127, 0, 0, 1], port)), true));
+    // Its own change, from yet another port, isn't echoed (its `$fdr`, a
+    // parameter of its own, is); another client's is pushed.
+    send(&Message::new("/ch/5/fdr", vec![Arg::Float(-7.5)]));
+    let got = events();
+    assert!(got.iter().all(|m| m.addr != "/ch/5/fdr"), "{got:?}");
+    Osc::new(&server).send(&Message::new("/ch/5/fdr", vec![Arg::Float(-3.0)]));
+    let got = events();
+    assert!(got.contains(&Message::new("/ch/5/fdr", vec![Arg::Float(-3.0)])), "{got:?}");
+}
+
+/// Another program on this computer can't bind the OSC or discovery port on
+/// one of its addresses over Sidecar's: Windows would hand it what clients
+/// send to that address.
+#[cfg(windows)]
+#[test]
+fn udp_ports_are_not_shared_with_other_programs() {
+    let handle: Arc<dyn EngineHandle> = Arc::new(Arc::new(Engine::new(0)));
+    let config = Config { discovery_port: 0, osc_port: 0, native_port: 0, native: false, ..Config::default() };
+    let server = WingServer::start(handle, Arc::new(WingState::default()), &config);
+    let st = server.status();
+    assert!(st.errors.is_empty(), "{:?}", st.errors);
+    for port in [st.osc.unwrap().port(), st.discovery.unwrap().port()] {
+        assert!(UdpSocket::bind(("127.0.0.1", port)).is_err(), "port {port} taken over");
+    }
+}
+
 #[test]
 fn osc_scene_control_and_listen() {
     let engine = Arc::new(Engine::new(0));
