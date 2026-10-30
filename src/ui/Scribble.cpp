@@ -91,13 +91,28 @@ namespace
     }
 
     /** One row of the name: centred when it fits, else from the left and cut
-        off at the right edge (typing goes on to the right, as on the console). */
+        off at the right edge (typing goes on to the right, as on the console).
+        As on the console, a letter that reaches below the baseline (g, j, p,
+        q, y) is raised to sit on it, so it shows whole within the row. */
     void nameRow (juce::Graphics& g, const juce::String& text, juce::Rectangle<float> area)
     {
-        const bool fits = juce::GlyphArrangement::getStringWidth (g.getCurrentFont(), text) <= area.getWidth();
+        const auto& font = g.getCurrentFont();
+        const float width = juce::GlyphArrangement::getStringWidth (font, text);
+        juce::GlyphArrangement glyphs;
+        glyphs.addLineOfText (font, text, 0.0f, 0.0f); // on the baseline y = 0
+        const float overshoot = font.getHeight() * 0.04f; // round letters dip a little below it
+        for (int i = 0; i < glyphs.getNumGlyphs(); ++i)
+        {
+            juce::Path outline;
+            glyphs.getGlyph (i).createPath (outline);
+            if (const float below = outline.getBounds().getBottom(); below > overshoot)
+                glyphs.moveRangeOfGlyphs (i, 1, 0.0f, -below);
+        }
+        const float x = width <= area.getWidth() ? area.getCentreX() - width * 0.5f : area.getX();
+        const float baseline = area.getCentreY() - font.getHeight() * 0.5f + font.getAscent();
         juce::Graphics::ScopedSaveState clip (g);
         g.reduceClipRegion (area.toNearestInt());
-        g.drawText (text, area, fits ? juce::Justification::centred : juce::Justification::centredLeft, false);
+        glyphs.draw (g, juce::AffineTransform::translation (x, baseline));
     }
 } // namespace
 
