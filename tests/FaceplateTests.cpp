@@ -3,6 +3,7 @@
 #include "ui/MeterBallistics.h"
 #include "ui/Faceplate.h"
 #include "ui/FaceplateDesign.h"
+#include "ui/HomeScreens.h"
 #include "ui/LookAndFeel.h"
 #include "ui/DynamicsGraph.h"
 #include "ui/ModelParams.h"
@@ -129,6 +130,83 @@ public:
             expectEquals (ratioText ("EXP", 5), juce::String ("1:2"));
             expectEquals (ratioText ("9000C", 1), juce::String ("1.43:1"));
             expectEquals (ratioText ("DEQ", 0), juce::String ("1.2:1"));
+        }
+
+        beginTest ("EQ screen: the lit LO CUT, TILT and HI CUT take knobs 1, 2 and 6 (3.1.2)");
+        {
+            ld::FilterParams f {};
+            f.lowCutFreq = kLowCutDefaultHz;
+            f.highCutFreq = kHighCutDefaultHz;
+            const int tilt = models::findModel (models::FilterTools, "TILT");
+            expect (tilt >= 0);
+            f.toolModel = tilt;
+
+            // The WING EQ's own knobs with the low band selected: BAND L, (none), GAIN, Q, FREQ.
+            const auto eqKnobs = []
+            {
+                std::vector<ui::HomeKnob> k (5);
+                for (auto [i, label] : { std::pair { 0, "BAND L" }, std::pair { 2, "GAIN L" }, std::pair { 3, "Q L" }, std::pair { 4, "FREQ L" } })
+                {
+                    k[(size_t) i].binding.label = label;
+                    k[(size_t) i].binding.get = [] { return 0.5f; };
+                }
+                return k;
+            };
+            const auto labels = [] (const std::vector<ui::HomeKnob>& k)
+            {
+                juce::StringArray s;
+                for (auto& knob : k)
+                    s.add (knob.binding.isValid() ? knob.binding.label : "-");
+                return s.joinIntoString (",");
+            };
+
+            // All off: the EQ's knobs as they are, padded to six.
+            auto k = eqKnobs();
+            ui::addEqFilterKnobs (k, f);
+            expectEquals (labels (k), juce::String ("BAND L,-,GAIN L,Q L,FREQ L,-"));
+
+            f.lowCut = true;
+            f.highCut = true;
+            f.tool = true;
+            k = eqKnobs();
+            ui::addEqFilterKnobs (k, f);
+            expectEquals (labels (k), juce::String ("LC FREQ,TILT,GAIN L,Q L,FREQ L,HC FREQ"));
+            // The knobs move the filters (over FILTER SETUP's ranges) and read as their keys' screens.
+            k[0].binding.set (1.0f);
+            expectWithinAbsoluteError (f.lowCutFreq.load(), 2000.0f, 0.5f);
+            k[5].binding.set (0.0f);
+            expectWithinAbsoluteError (f.highCutFreq.load(), 50.0f, 0.01f);
+            k[1].binding.set (1.0f);
+            const auto& tiltSpec = models::model (models::FilterTools, tilt);
+            expectWithinAbsoluteError (f.toolParams[0].load(), tiltSpec.params[0].max, 1.0e-4f);
+            expect (k[1].binding.text().endsWith (" dB"));
+
+            // Only the TILT EQ takes the second knob: MAXER and the all-pass filters leave it.
+            if (const int maxer = models::findModel (models::FilterTools, "MAX"); expect (maxer >= 0), maxer >= 0)
+            {
+                f.toolModel = maxer;
+                k = eqKnobs();
+                ui::addEqFilterKnobs (k, f);
+                expectEquals (labels (k), juce::String ("LC FREQ,-,GAIN L,Q L,FREQ L,HC FREQ"));
+                f.toolModel = tilt;
+            }
+
+            // Each filter on its own.
+            f.highCut = false;
+            f.tool = false;
+            k = eqKnobs();
+            ui::addEqFilterKnobs (k, f);
+            expectEquals (labels (k), juce::String ("LC FREQ,-,GAIN L,Q L,FREQ L,-"));
+            f.lowCut = false;
+            f.highCut = true;
+            k = eqKnobs();
+            ui::addEqFilterKnobs (k, f);
+            expectEquals (labels (k), juce::String ("BAND L,-,GAIN L,Q L,FREQ L,HC FREQ"));
+            f.highCut = false;
+            f.tool = true;
+            k = eqKnobs();
+            ui::addEqFilterKnobs (k, f);
+            expectEquals (labels (k), juce::String ("BAND L,TILT,GAIN L,Q L,FREQ L,-"));
         }
 
         beginTest ("The dynamics model list's tiles are fixed pictures at the model's factory values");

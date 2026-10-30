@@ -2,6 +2,7 @@
 
 #include "ui/HomeWidgets.h"
 #include "ui/Knobs.h"
+#include "ui/ModelParams.h"
 #include "ui/UiContext.h"
 
 #include <memory>
@@ -145,6 +146,36 @@ KnobBinding inputDelayBinding (UiContext&, InputParams&);
 /** The GAIN of the source on the strip's MAIN input (both sources of a pair),
     as the WING's preamp gain: -12 .. +60 dB in 0.5 dB steps. */
 KnobBinding sourceGainBinding (UiContext&, Strip&);
+
+/** The FILTER block's LC FREQ and HC FREQ knobs (FILTER SETUP, the EQ screen). */
+inline KnobBinding lowCutFreqBinding (FilterParams& f)
+{
+    return home::wingFreq ("LC FREQ", f.lowCutFreq, 20.0f, 2000.0f, kLowCutDefaultHz);
+}
+
+inline KnobBinding highCutFreqBinding (FilterParams& f)
+{
+    return home::wingFreq ("HC FREQ", f.highCutFreq, 50.0f, 20000.0f, kHighCutDefaultHz);
+}
+
+/** The FILTER block on the WING EQ's knobs (channels, firmware 3.1.2): LC
+    FREQ on the first while LO CUT is on, the TILT EQ's TILT on the second
+    while the tool filter is the TILT EQ and on, HC FREQ on the sixth while HI
+    CUT is on. A filter that is off leaves its knob to the EQ (or empty), as
+    the key filters leave the knobs of the parameters they don't use. `k`
+    holds the EQ's knobs and is padded to six. */
+inline void addEqFilterKnobs (std::vector<HomeKnob>& k, FilterParams& f, juce::Component* target = nullptr)
+{
+    if (k.size() < 6)
+        k.resize (6);
+    if (f.lowCut.load())
+        k[0] = { lowCutFreqBinding (f), home::freqStyle (target) };
+    if (const int tool = f.toolModel.load(); f.tool.load() && home::toolFilterToken (tool) == "TILT")
+        if (const auto& spec = models::model (models::FilterTools, tool); ! spec.params.empty())
+            k[1] = { bindConsoleParam (f.toolParams[0], spec.params[0]), home::toolStyle (target, home::toolFilterColour (tool)) };
+    if (f.highCut.load())
+        k[5] = { highCutFreqBinding (f), home::freqStyle (target) };
+}
 
 // The block screens.
 std::unique_ptr<HomeScreen> makeInputScreen (UiContext&, Strip&);

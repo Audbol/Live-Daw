@@ -1788,7 +1788,7 @@ public:
     std::vector<HomeKnob> knobs() override
     {
         auto& f = strip.params.filter;
-        std::vector<HomeKnob> k { { wingFreq ("LC FREQ", f.lowCutFreq, 20.0f, 2000.0f, kLowCutDefaultHz), freqStyle (graph) } };
+        std::vector<HomeKnob> k { { lowCutFreqBinding (f), freqStyle (graph) } };
         // The tool filter's parameters (TILT...) in the middle, HC FREQ always on the 6th knob.
         const auto& spec = models::model (models::FilterTools, f.toolModel.load());
         const auto colour = toolFilterColour (f.toolModel.load());
@@ -1796,7 +1796,7 @@ public:
             k.push_back ({ bindConsoleParam (f.toolParams[i], spec.params[(size_t) i]), toolStyle (graph, colour) });
         while (k.size() < 5)
             k.push_back ({});
-        k.push_back ({ wingFreq ("HC FREQ", f.highCutFreq, 50.0f, 20000.0f, kHighCutDefaultHz), freqStyle (graph) });
+        k.push_back ({ highCutFreqBinding (f), freqStyle (graph) });
         return k;
     }
 
@@ -2458,6 +2458,9 @@ public:
         k.push_back ({ b[0], centreStyle (graph) });
         k.push_back ({ b[2], qStyle (graph) });
         k.push_back ({ b[1], styleOf (KnobStyle::Bar::Thumb, KnobColours::blue, graph) });
+        // On channels the lit LO CUT / TILT / HI CUT take the first, second and sixth knobs [3.1.2].
+        if (filter != nullptr)
+            addEqFilterKnobs (k, strip.params.filter, graph);
         return k;
     }
 
@@ -2708,6 +2711,18 @@ private:
             toolKey->setOnColour (toolFilterColour (shownTool));
             toolKey->offInk = toolFilterColour (shownTool);
         }
+        if (filter != nullptr)
+        {
+            // LO CUT, HI CUT or the tool filter switched (here, on FILTER SETUP
+            // or remotely): their knobs come or go.
+            auto& f = strip.params.filter;
+            const int filters = (f.lowCut.load() ? 1 : 0) | (f.highCut.load() ? 2 : 0) | (f.tool.load() ? 4 : 0) | (shownTool << 3);
+            if (filters != shownFilters)
+            {
+                shownFilters = filters;
+                notifyKnobs();
+            }
+        }
         if (! bands.isEmpty())
         {
             // The selected band switched between shelf and bell: its Q comes or goes.
@@ -2736,7 +2751,7 @@ private:
     juce::StringArray bands, allowed;
     std::vector<juce::Rectangle<int>> bandKeys;
     juce::Rectangle<int> header, sidePanel, bandKeyArea;
-    int bandKeyH = 30, bandKeyGap = 4, shownModel = -1, shownTool = -1, knobPage = 0, pressCount = 0;
+    int bandKeyH = 30, bandKeyGap = 4, shownModel = -1, shownTool = -1, shownFilters = -1, knobPage = 0, pressCount = 0;
     bool heldReset = false, shownShelf = false;
 };
 
