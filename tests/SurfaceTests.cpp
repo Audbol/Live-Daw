@@ -5,6 +5,7 @@
 #include <juce_gui_basics/juce_gui_basics.h>
 
 #include <optional>
+#include <tuple>
 
 using namespace livedaw;
 
@@ -28,6 +29,22 @@ int inkedPixels (const juce::Image& image)
         for (int x = 0; x < image.getWidth(); ++x)
             n += image.getPixelAt (x, y) != bg ? 1 : 0;
     return n;
+}
+
+/** The rows from the first to the last with any ink (an empty range if none). */
+juce::Range<int> inkedRows (const juce::Image& image)
+{
+    const auto bg = image.getPixelAt (0, 0);
+    int top = -1, bottom = -1;
+    for (int y = 0; y < image.getHeight(); ++y)
+        for (int x = 0; x < image.getWidth(); ++x)
+            if (image.getPixelAt (x, y) != bg)
+            {
+                top = top < 0 ? y : top;
+                bottom = y;
+                break;
+            }
+    return { juce::jmax (0, top), bottom + 1 };
 }
 
 /** What a strip shows, as FaderStrip decides it: a slot with no target is blank. */
@@ -107,6 +124,25 @@ public:
             const auto target = LayerSet::surfaceTarget (layer, 1);
             expect (target.has_value());
             expect (inkedPixels (drawLcd (shownFor (target, channel))) > 20);
+        }
+
+        beginTest ("Letters with descenders (g, j, p, q, y) are raised onto the baseline and show whole, as on the WING");
+        ui::ScribbleInfo named;
+        named.name = "HHH";
+        const int capHeight = inkedRows (drawLcd (named, 144, 104)).getLength();
+        for (const auto& [caps, round, descending] : { std::tuple<const char*, const char*, const char*> { "HHH", "ooo", "ggg" },
+                                                       { "HHHHH HHHHH", "ooooo ooooo", "ggggg ggggg" } })
+        {
+            named.name = caps;
+            const auto capRows = inkedRows (drawLcd (named, 144, 104));
+            named.name = round;
+            const auto oRows = inkedRows (drawLcd (named, 144, 104));
+            named.name = descending;
+            const auto gRows = inkedRows (drawLcd (named, 144, 104));
+            // On the baseline, like the capitals beside them...
+            expectLessOrEqual (gRows.getEnd(), capRows.getEnd() + 1, descending);
+            // ...with the whole tail: a "g" is about a third of a capital taller than an "o".
+            expectGreaterOrEqual (gRows.getLength() - oRows.getLength(), capHeight / 5, descending);
         }
     }
 };
