@@ -947,7 +947,9 @@ fn decode_subframe(r: &mut BitReader, out: &mut [i64], bps: u32, qlp: &mut Vec<i
 /// Returns the header and the frame's length in bytes.
 fn decode_frame(b: &[u8], si: &StreamInfo, out: &mut [Vec<i64>], qlp: &mut Vec<i64>) -> Option<(FrameHeader, usize)> {
     let h = parse_header(b, si)?;
-    if h.channels > out.len() {
+    // Every frame has the stream's channels (fewer would leave a channel of
+    // the block from an earlier frame).
+    if h.channels != out.len() {
         return None;
     }
     let mut r = BitReader::at(b, h.len * 8);
@@ -1123,7 +1125,11 @@ impl FlacReader {
                 self.next_offset = offset + len as u64;
                 Ok(true)
             }
-            None => Ok(false),
+            None => {
+                // The failed decode may have resized the block: it holds no frame now.
+                self.block_len = 0;
+                Ok(false)
+            }
         }
     }
 
@@ -1482,6 +1488,42 @@ mod tests {
             r.read(20000, &mut [&mut a[..]]).unwrap();
             assert_eq!(a[0], f32::from(pcm[40000]) / 32768.0);
         }
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn a_damaged_frame_after_a_good_one_reads_as_silence() {
+        // A file whose second frame header claims 192 samples (with a valid
+        // header CRC) but whose body is the original 4096-sample frame: the
+        // frame fails to decode. Reading the first frame again after trying
+        // the second must still work, not index past the decoded block.
+        let dir = temp_dir("flac-damaged-frame");
+        let path = dir.join("a.flac");
+        let frames = 3 * BLOCK_SIZE;
+        let ch: Vec<Vec<f32>> =
+            (0..2).map(|c| (0..frames).map(|k| ((k * (c + 1)) as f32 * 0.01).sin() * 0.5).collect()).collect();
+        let mut w = create_writer(&path, 2, 48000, EncodeFormat::new(FileFormat::Flac, SampleFormat::Int16, 0)).unwrap();
+        w.write_planar(&[&ch[0], &ch[1]], frames).unwrap();
+        w.finalize().unwrap();
+
+        let mut r = FlacReader::open(&path).unwrap();
+        let mut a = [0.0f32; 16];
+        r.read(0, &mut [&mut a[..]]).unwrap();
+        let second = r.next_offset as usize;
+        drop(r);
+        let mut bytes = std::fs::read(&path).unwrap();
+        assert_eq!(&bytes[second..second + 2], &[0xff, 0xf8]);
+        bytes[second + 2] = (1 << 4) | (bytes[second + 2] & 15); // 192 samples
+        bytes[second + 5] = crc8(&bytes[second..second + 5]);
+        std::fs::write(&path, &bytes).unwrap();
+
+        let mut r = FlacReader::open(&path).unwrap();
+        let (mut a, mut b) = (vec![0.0f32; BLOCK_SIZE], vec![0.0f32; BLOCK_SIZE]);
+        r.read(0, &mut [&mut a[..16], &mut b[..16]]).unwrap();
+        r.read(BLOCK_SIZE as i64, &mut [&mut a[..16], &mut b[..16]]).unwrap();
+        assert!(a[..16].iter().all(|&x| x == 0.0), "the damaged frame is silent");
+        r.read(0, &mut [&mut a[..], &mut b[..]]).unwrap();
+        assert_eq!(a[BLOCK_SIZE - 1], (ch[0][BLOCK_SIZE - 1] * 32768.0).round() / 32768.0);
         let _ = std::fs::remove_dir_all(dir);
     }
 }
