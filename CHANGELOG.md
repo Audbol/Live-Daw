@@ -5,6 +5,16 @@ All notable changes to Sidecar are listed here. Versions follow
 
 ## [Unreleased]
 
+### Fixed
+
+- Importing a WING snapshot no longer patches two of its inputs to one port. The WING's
+  LOCAL, AUX, StageConnect, USB, MOD and AES/EBU inputs land on the ports AES50 A (or B)
+  has here, so a show with the drums on A 1-5 and the vocals on the console's LOCAL 1-5
+  played the drums on the vocal channels, under the drums' names. The input that would
+  share a port now moves to a free AES50 B / C port (a stereo pair to a free pair) with
+  its name, colour, icon, gain and mode, and every patch to it (channel, ALT, outputs)
+  follows; the import log lists each move.
+
 ## [0.1.6] - beta
 
 The fourth round of matching Sidecar to a real WING, cross-checked against WING Edit

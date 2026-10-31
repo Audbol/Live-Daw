@@ -352,3 +352,55 @@ fn console_level_settings_round_trip_through_a_snapshot() {
     let again = json::parse(&snap::export_text(&e3, &st3)).unwrap();
     assert_eq!(without_created(&again), without_created(&json::parse(&text2).unwrap()));
 }
+
+#[test]
+fn inputs_sharing_a_port_get_their_own() {
+    // LCL n and A n are both Sidecar's port n: the snapshot's LOCAL inputs move to free
+    // AES50 B ports (B 1 is named, so taken), with their settings and every patch to them.
+    let text = r#"{"type": "snapshot.11", "ae_data": {
+        "ch": {
+            "1": {"in": {"conn": {"grp": "A", "in": 1}}},
+            "2": {"in": {"conn": {"grp": "LCL", "in": 1}}},
+            "3": {"in": {"conn": {"grp": "LCL", "in": 3}}},
+            "4": {"in": {"conn": {"grp": "A", "in": 3}}}
+        },
+        "io": {
+            "in": {
+                "LCL": {"1": {"name": "VOZ 1", "g": 12.5}, "3": {"name": "GTR", "mode": "ST"}, "4": {"mode": "ST"}},
+                "A": {"1": {"name": "KICK"}, "3": {"name": "CX BT"}},
+                "B": {"1": {"name": "TALK"}}
+            },
+            "out": {"A": {"1": {"grp": "LCL", "in": 1}}}
+        }
+    }}"#;
+    let e = engine(4);
+    let st = WingState::default();
+    let r = snap::import_text(&e, &st, text, &ImportOptions::default()).unwrap();
+    assert_eq!(r.moved.len(), 2, "{}", r.details());
+    assert!(r.details().contains("LCL 1 (VOZ 1) shared LCL 1 with A 1 (KICK): now B 2"), "{}", r.details());
+    assert!(r.details().contains("LCL 3 (GTR) shared LCL 3 with A 3 (CX BT): now B 3 (stereo)"), "{}", r.details());
+    let input = |n: usize| e.channel_at(n - 1).unwrap().params.input_left.load(Relaxed);
+    assert_eq!((input(1), input(2), input(3), input(4)), (0, 49, 50, 2));
+    let sources = e.sources();
+    assert_eq!((sources.name(0), sources.name(2)), ("KICK".to_owned(), "CX BT".to_owned()));
+    assert_eq!((sources.name(48), sources.name(49), sources.name(50)), ("TALK".to_owned(), "VOZ 1".to_owned(), "GTR".to_owned()));
+    assert_eq!(sources.get(49).unwrap().gain_db.load(), 12.5);
+    assert_eq!(sources.get(50).unwrap().mode.load(Relaxed), livedaw_engine::sources::source_mode::STEREO);
+    assert!(e.channel_at(2).unwrap().params.stereo.load(Relaxed));
+    // The output patched to LOCAL 1 follows it.
+    let out = json::parse(&snap::export_text(&e, &st)).unwrap();
+    let a1 = out.get("ae_data").and_then(|a| a.get("io")?.get("out")?.get("A")?.get("1")).unwrap();
+    assert_eq!((a1.get("grp").and_then(Json::as_str), a1.get("in").and_then(Json::as_f64)), (Some("B"), Some(2.0)));
+}
+
+#[test]
+fn inputs_on_ports_of_their_own_stay() {
+    let text = r#"{"ae_data": {"ch": {
+        "1": {"in": {"conn": {"grp": "A", "in": 1}}},
+        "2": {"in": {"conn": {"grp": "LCL", "in": 2}}}
+    }}}"#;
+    let e = engine(2);
+    let r = snap::import_text(&e, &WingState::default(), text, &ImportOptions::default()).unwrap();
+    assert!(r.moved.is_empty(), "{}", r.details());
+    assert_eq!(e.channel_at(1).unwrap().params.input_left.load(Relaxed), 1);
+}

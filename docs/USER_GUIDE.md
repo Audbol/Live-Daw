@@ -1097,7 +1097,12 @@ and open-source projects (see below), and it is **experimental**.
   SNAP and press **LOAD** (or double-click it) to apply it to the console. LIBRARY > SHOW
   > **IMPORT WING** does the same from a file dialog, or adds a WING show's (`.show`)
   snapshots as scenes. The log lists
-  what could not be applied. **EXPORT WING** writes the console as a
+  what could not be applied. Sidecar's ports are the AES50 blocks (LCL n is A n), and
+  the WING's LOCAL, AUX, StageConnect, USB, MOD and AES/EBU inputs land on the port of
+  the same number: when a snapshot patches two inputs that land on one port (A 1 and
+  LOCAL 1, say), the second moves to a free AES50 B / C port with its source settings,
+  its patches follow, and the log lists it (*Moved: LCL 1 (VOZ 1) shared LCL 1 with
+  A 1 (KICK): now B 7*). **EXPORT WING** writes the console as a
   WING snapshot (experimental: its format follows snapshots saved by WING consoles on
   firmware 2.1 and 3.1, and it reads back into Sidecar, but it has not been loaded
   into a WING or WING Edit).
