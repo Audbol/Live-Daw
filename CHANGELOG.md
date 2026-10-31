@@ -5,6 +5,16 @@ All notable changes to Sidecar are listed here. Versions follow
 
 ## [Unreleased]
 
+### Fixed
+
+- Windows: when Windows couldn't resolve the Documents folder (redirected to a
+  network share or to OneDrive and not there), Sidecar put its folders at the root
+  of the drive (`C:\Sidecar\Recordings`), which a standard user can't create, and
+  recording failed with "Couldn't create ...". The default is now the `Documents`
+  folder in the user's folder (or app data), and a project that can't be created
+  says to choose another folder in FILE > Projects folder
+  ([#12](https://github.com/Audbol/Live-Daw/issues/12)).
+
 ## [0.1.6] - beta
 
 The fourth round of matching Sidecar to a real WING, cross-checked against WING Edit
