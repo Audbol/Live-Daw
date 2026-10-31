@@ -14,13 +14,14 @@
 //! (relative to the show, or console paths such as `I:/library/...`).
 
 use crate::json::{self, Json};
-use crate::map::{bindings, Binding, Console, SetError, WingState};
+use crate::map::{bindings, port, Binding, Console, SetError, WingState};
 use crate::schema::{schema, Node, NodeType};
 use crate::value::Value;
 use livedaw_engine::Engine;
 use livedaw_session::console::{load_console, save_console, NoPlugins};
 use livedaw_session::Show;
-use std::collections::BTreeMap;
+use std::collections::btree_map::Entry;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 /// The snapshot format written on export (firmware 3.1's).
@@ -57,6 +58,8 @@ pub struct ImportReport {
     pub errors: Vec<String>,
     pub error_count: usize,
     pub channels_added: usize,
+    /// Inputs moved off a port another patched input of the snapshot has, and where to.
+    pub moved: Vec<String>,
 }
 
 impl ImportReport {
@@ -72,6 +75,9 @@ impl ImportReport {
         if self.channels_added > 0 {
             s.push_str(&format!(", {} channels added", self.channels_added));
         }
+        if !self.moved.is_empty() {
+            s.push_str(&format!(", {} inputs moved to free ports", self.moved.len()));
+        }
         if self.unknown_count > 0 {
             s.push_str(&format!(", {} unknown paths", self.unknown_count));
         }
@@ -84,6 +90,9 @@ impl ImportReport {
     /// The summary plus what wasn't applied, one item per line.
     pub fn details(&self) -> String {
         let mut s = self.summary();
+        for m in &self.moved {
+            s.push_str(&format!("\nMoved: {m}"));
+        }
         if !self.kept_by_group.is_empty() {
             s.push_str("\nNot applied (no Sidecar equivalent, kept for export):");
             for (g, n) in &self.kept_by_group {
@@ -135,6 +144,167 @@ fn json_value(ty: NodeType, j: &Json) -> Option<Value> {
         (_, Json::Str(s)) => Value::Str(s.clone()),
         _ => return None,
     })
+}
+
+// ---- inputs that share a port --------------------------------------------------------
+
+/// The WING's hardware input groups, in the order they keep a port two of them
+/// land on: the AES50 blocks are Sidecar's ports (LCL n is A n), the other
+/// groups take the port of the same number ([`port::wing_to_source`]).
+const PORT_GROUPS: [&str; 9] = ["A", "B", "C", "LCL", "AUX", "SC", "USB", "MOD", "AES"];
+
+/// The patch fields of strip inputs (main and ALT) and outputs: group, number.
+const PATCH_KEYS: [(&str, &str); 2] = [("grp", "in"), ("altgrp", "altin")];
+
+fn field_mut<'a>(j: &'a mut Json, key: &str) -> Option<&'a mut Json> {
+    match j {
+        Json::Obj(entries) => entries.iter_mut().find(|(k, _)| k == key).map(|(_, v)| v),
+        _ => None,
+    }
+}
+
+/// The hardware inputs patched anywhere under `j`, as (group, number).
+fn patched_inputs(j: &Json, out: &mut BTreeSet<(String, i32)>) {
+    let Json::Obj(entries) = j else { return };
+    for (gk, nk) in PATCH_KEYS {
+        if let (Some(g), Some(n)) = (j.get(gk).and_then(Json::as_str), j.get(nk).and_then(Json::as_f64)) {
+            if PORT_GROUPS.contains(&g) {
+                out.insert((g.to_owned(), n.round() as i32));
+            }
+        }
+    }
+    for (_, v) in entries {
+        patched_inputs(v, out);
+    }
+}
+
+/// Repatches every patch under `j` found in `moves`.
+fn repatch(j: &mut Json, moves: &BTreeMap<(String, i32), (&'static str, i32)>) {
+    for (gk, nk) in PATCH_KEYS {
+        let key = match (j.get(gk).and_then(Json::as_str), j.get(nk).and_then(Json::as_f64)) {
+            (Some(g), Some(n)) => (g.to_owned(), n.round() as i32),
+            _ => continue,
+        };
+        if let Some(&(g, n)) = moves.get(&key) {
+            if let Some(v) = field_mut(j, gk) {
+                *v = Json::Str(g.to_owned());
+            }
+            if let Some(v) = field_mut(j, nk) {
+                *v = Json::Num(n as f64);
+            }
+        }
+    }
+    if let Json::Obj(entries) = j {
+        for (_, v) in entries {
+            repatch(v, moves);
+        }
+    }
+}
+
+/// An input's source settings (`/io/in/G/N`).
+fn source_of<'a>(ae: &'a Json, g: &str, n: i32) -> Option<&'a Json> {
+    ae.get("io")?.get("in")?.get(g)?.get(&n.to_string())
+}
+
+/// A port as ROUTING names it (LCL 1 ..., B 1 ..., C 1 ...).
+fn port_label(p: i32) -> String {
+    match port::source_to_wing(p) {
+        Some(("A", n)) => format!("LCL {n}"),
+        Some((g, n)) => format!("{g} {n}"),
+        None => format!("port {}", p + 1),
+    }
+}
+
+/// Gives every hardware input the snapshot patches a port of its own. The
+/// WING's LCL, AUX, SC, USB, MOD and AES inputs land on the ports AES50 A
+/// (or B) has here, so LOCAL 1 and A 1 would both be Sidecar's LCL 1: the
+/// channels patched to them would hear, and be named after, the same source.
+/// The input that loses the port (by [`PORT_GROUPS`]' order) moves to a free
+/// AES50 B / C port (a stereo pair to a free pair) with its source settings,
+/// and every patch to it follows. Returns what moved.
+fn separate_shared_ports(snap: &mut Json) -> Vec<String> {
+    let Some(ae) = field_mut(snap, "ae_data") else { return Vec::new() };
+    let mut patched = BTreeSet::new();
+    patched_inputs(ae, &mut patched);
+    let rank = |g: &str| PORT_GROUPS.iter().position(|x| *x == g).unwrap_or(PORT_GROUPS.len());
+    let mut inputs: Vec<(String, i32)> = patched.into_iter().collect();
+    inputs.sort_by_key(|(g, n)| (rank(g), *n));
+
+    let mut owner: BTreeMap<i32, (String, i32)> = BTreeMap::new();
+    let mut shared = Vec::new();
+    for input in inputs {
+        let Some(p) = port::wing_to_source(&input.0, input.1).filter(|p| (0..3 * port::BLOCK).contains(p)) else {
+            continue;
+        };
+        match owner.entry(p) {
+            Entry::Occupied(_) => shared.push((input, p)),
+            Entry::Vacant(e) => {
+                e.insert(input);
+            }
+        }
+    }
+    if shared.is_empty() {
+        return Vec::new();
+    }
+
+    let text = |ae: &Json, g: &str, n: i32, key: &str| {
+        source_of(ae, g, n).and_then(|s| s.get(key)).and_then(Json::as_str).unwrap_or("").to_owned()
+    };
+    let named = |ae: &Json, g: &str, n: i32| {
+        let name = text(ae, g, n, "name");
+        if name.is_empty() {
+            format!("{g} {n}")
+        } else {
+            format!("{g} {n} ({name})")
+        }
+    };
+    // A port is free when nothing patched has it and the snapshot left its B / C source unnamed.
+    let free = |ae: &Json, owner: &BTreeMap<i32, (String, i32)>, p: i32| {
+        !owner.contains_key(&p) && port::source_to_wing(p).is_some_and(|(g, n)| text(ae, g, n, "name").is_empty())
+    };
+
+    let mut moves: BTreeMap<(String, i32), (&'static str, i32)> = BTreeMap::new();
+    let mut report = Vec::new();
+    for ((g, n), p) in shared {
+        if moves.contains_key(&(g.clone(), n)) {
+            continue; // moved with its pair
+        }
+        let stereo = n % 2 == 1 && matches!(text(ae, &g, n, "mode").as_str(), "ST" | "M/S");
+        let width = if stereo { 2 } else { 1 };
+        let to = (port::BLOCK..3 * port::BLOCK).step_by(width as usize).find(|&q| (q..q + width).all(|q| free(ae, &owner, q)));
+        let other = named(ae, &owner[&p].0, owner[&p].1);
+        let Some(q) = to else {
+            report.push(format!("{} shares {} with {other}: no free AES50 B / C port", named(ae, &g, n), port_label(p)));
+            continue;
+        };
+        report.push(format!(
+            "{} shared {} with {other}: now {}",
+            named(ae, &g, n),
+            port_label(p),
+            port_label(q) + if stereo { " (stereo)" } else { "" }
+        ));
+        for i in 0..width {
+            let Some((blk, k)) = port::source_to_wing(q + i) else { continue };
+            owner.insert(q + i, (blk.to_owned(), k));
+            moves.insert((g.clone(), n + i), (blk, k));
+        }
+    }
+
+    repatch(ae, &moves);
+    // The settings go with the input; the old entry would otherwise still name the shared port.
+    let Some(sources) = field_mut(ae, "io").and_then(|io| field_mut(io, "in")) else { return report };
+    for ((g, n), (blk, k)) in &moves {
+        let Some(Json::Obj(group)) = field_mut(sources, g) else { continue };
+        let Some(i) = group.iter().position(|(key, _)| *key == n.to_string()) else { continue };
+        let (_, settings) = group.remove(i);
+        if let Some(Json::Obj(dest)) = field_mut(sources, blk) {
+            match dest.iter_mut().find(|(key, _)| *key == k.to_string()) {
+                Some((_, v)) => *v = settings,
+                None => dest.push((k.to_string(), settings)),
+            }
+        }
+    }
+    report
 }
 
 struct Importer<'a, 'c> {
@@ -230,9 +400,13 @@ pub fn import_json(engine: &Engine, state: &WingState, snap: &Json, opts: &Impor
             channels_added = engine.num_channels() - have;
         }
     }
+    let mut snap = snap.clone();
+    let moved = separate_shared_ports(&mut snap);
+    let snap = &snap;
     let c = Console::new(engine, state);
     let mut imp = Importer { c: &c, report: ImportReport::default(), deferred: Vec::new() };
     imp.report.channels_added = channels_added;
+    imp.report.moved = moved;
     imp.report.file_type = snap.get("type").and_then(Json::as_str).unwrap_or("").to_owned();
     let creator: Vec<&str> =
         ["creator_model", "creator_fw", "creator_name"].iter().filter_map(|k| snap.get(k).and_then(Json::as_str)).collect();
