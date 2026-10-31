@@ -669,7 +669,10 @@ a WING with a WING-LIVE card, and edits them in a DAW-style editor.
   **FILE > Projects folder** in the editor puts new projects (and so their
   recordings) in another folder, on another drive for instance (Choose..., or back to
   the Default); existing projects stay where they are. A chosen folder whose drive
-  isn't connected is not created anew: Sidecar asks for another one.
+  isn't connected is not created anew: Sidecar asks for another one. If Windows
+  can't tell Sidecar where Documents is, the default is the `Documents` folder in
+  your user folder; if a project still can't be created there, choose a folder you
+  can write to in **FILE > Projects folder**.
 - **Recorder screen** (status-bar **LIVE** icon, or MULTI TRANSP > VIEW): the PLAYER
   (armed channels, rate, meters of the armed tracks, the red time, transport with the
   marker keys, free disk and record time left, timeline), the SESSIONS (click to open;

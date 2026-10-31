@@ -2,6 +2,7 @@
 #include "daw/Project.h"
 #include "daw/Session.h"
 #include "daw/TimeGrid.h"
+#include "engine/AppPaths.h"
 #include "engine/MixerEngine.h"
 #include "TestHelpers.h"
 
@@ -69,6 +70,7 @@ public:
         testFormats();
         testSessionSetups();
         testPlayModesAndAutoInput();
+        testDefaultFolders();
     }
 
 private:
@@ -1046,6 +1048,31 @@ private:
 
             session.armAll (false);
             expectEquals (session.getNumArmed(), 0);
+        }
+    }
+
+    void testDefaultFolders()
+    {
+        beginTest ("Default folders: an unknown Documents isn't the drive's root; a failed save says where to choose another (#12)");
+        {
+            const auto home = juce::File::getSpecialLocation (juce::File::userHomeDirectory);
+            expect (paths::firstKnown ({ juce::File(), home }) == home);
+            expect (paths::firstKnown ({ juce::File() }) == juce::File::getSpecialLocation (juce::File::tempDirectory));
+            for (const auto& f : { paths::documents(), paths::appData(), Session::getDefaultFolder() })
+                expect (f.getParentDirectory() != f.getParentDirectory().getParentDirectory(), f.getFullPathName());
+
+            TempFolder temp;
+            MixerEngine engine (0);
+            engine.prepareOffline (48000.0, 128, 2, 2);
+            Session session (engine.getRecorder(), nullptr);
+            // A projects folder that can't be created (here: under a file).
+            const auto blocker = temp.folder.getChildFile ("Not a folder");
+            blocker.replaceWithText ("x");
+            session.setDefaultFolder (blocker.getChildFile ("Recordings"));
+            const auto r = session.ensureFolder();
+            expect (r.failed());
+            expect (r.getErrorMessage().contains ("FILE > Projects folder"), r.getErrorMessage());
+            expect (session.createProject ("Gig").getErrorMessage().contains ("FILE > Projects folder"));
         }
     }
 

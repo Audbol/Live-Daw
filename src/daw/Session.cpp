@@ -112,6 +112,14 @@ namespace
                                        + " isn't available (is its drive connected?). Choose another one in FILE > Projects folder.");
         return juce::Result::ok();
     }
+
+    /** A project that couldn't be made in the projects folder says where to choose another. */
+    juce::Result withFolderHint (juce::Result r)
+    {
+        if (r.failed())
+            return juce::Result::fail (r.getErrorMessage() + ". Choose a folder you can write to in FILE > Projects folder.");
+        return r;
+    }
 } // namespace
 
 void Session::newProject()
@@ -135,6 +143,8 @@ juce::Result Session::createProject (const juce::String& name, const juce::File&
         return juce::Result::fail ("A project called \"" + clean + "\" already exists");
     newProject();
     auto result = project.saveAs (folder);
+    if (parent == juce::File())
+        result = withFolderHint (result);
     if (result.wasOk())
     {
         addRecent (project.getFile());
@@ -207,7 +217,7 @@ juce::Result Session::ensureFolder()
     auto folder = getProjectsFolder().getChildFile (base);
     for (int i = 2; folder.exists(); ++i)
         folder = getProjectsFolder().getChildFile (base + " " + juce::String (i));
-    auto result = project.saveAs (folder);
+    auto result = withFolderHint (project.saveAs (folder));
     if (result.wasOk())
     {
         addRecent (project.getFile());
