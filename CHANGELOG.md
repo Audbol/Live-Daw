@@ -5,6 +5,17 @@ All notable changes to Sidecar are listed here. Versions follow
 
 ## [Unreleased]
 
+### Fixed
+
+- WING REMOTE: OSC apps on the same computer as Sidecar (wosc and the like) get
+  Sidecar's replies and changes. On Windows, an app could bind its own address on
+  Sidecar's OSC or discovery port and then receive everything sent to it, so
+  Sidecar never saw the app as a client. Sidecar now holds those ports
+  exclusively ([#6](https://github.com/Audbol/Live-Daw/issues/6)).
+- WING REMOTE: an OSC app that sends each request from a new port is listed once,
+  under the port it asked replies on, not once per request. Its own changes are no
+  longer pushed back to it when they arrive from a different port.
+
 ## [0.1.6] - beta
 
 The fourth round of matching Sidecar to a real WING, cross-checked against WING Edit

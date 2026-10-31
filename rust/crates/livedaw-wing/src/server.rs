@@ -244,10 +244,9 @@ pub struct Status {
 }
 
 struct OscSubscription {
-    /// Where events go (the requester, or its `/%<port>`).
+    /// Where events go (the requester, or its `/%<port>`); also who the
+    /// client is (its own changes aren't echoed to it).
     addr: SocketAddr,
-    /// Who asked (its own changes aren't echoed to it).
-    requester: SocketAddr,
     format: SubFormat,
     expires: Instant,
 }
@@ -343,6 +342,8 @@ pub struct Shared {
     generation: AtomicU64,
     clients: Mutex<Vec<Arc<NativeClient>>>,
     osc_subs: Mutex<Vec<OscSubscription>>,
+    /// OSC clients by where their replies go: a client sending each request
+    /// from a new port (and asking replies on its `/%<port>`) is one client.
     osc_peers: Mutex<HashMap<SocketAddr, Instant>>,
     /// The paced OSC event sender runs (`osc_send_loop`).
     osc_events_on: AtomicBool,
@@ -476,7 +477,7 @@ impl Shared {
         let now = Instant::now();
         let subs: Vec<(SocketAddr, SubFormat)> = lock(&self.osc_subs)
             .iter()
-            .filter(|s| s.expires > now && origin != Origin::Osc(s.requester))
+            .filter(|s| s.expires > now && origin != Origin::Osc(s.addr))
             .map(|s| (s.addr, s.format))
             .collect();
         if subs.is_empty() || !self.osc_events_on.load(Ordering::Relaxed) {
@@ -651,7 +652,7 @@ impl Shared {
         }
     }
 
-    fn subscribe_osc(&self, addr: SocketAddr, requester: SocketAddr, format: SubFormat) {
+    fn subscribe_osc(&self, addr: SocketAddr, format: SubFormat) {
         let now = Instant::now();
         let mut subs = lock(&self.osc_subs);
         subs.retain(|s| s.expires > now && s.addr != addr);
@@ -661,7 +662,7 @@ impl Shared {
                 subs.remove(i);
             }
         }
-        subs.push(OscSubscription { addr, requester, format, expires: now + OSC_SUBSCRIPTION_LIFE });
+        subs.push(OscSubscription { addr, format, expires: now + OSC_SUBSCRIPTION_LIFE });
         drop(subs);
         self.ensure_baseline();
     }
@@ -705,15 +706,14 @@ impl Shared {
                 seconds: now.duration_since(cl.since).as_secs(),
             });
         }
-        let subs: Vec<(SocketAddr, SocketAddr)> =
-            lock(&self.osc_subs).iter().filter(|s| s.expires > now).map(|s| (s.addr, s.requester)).collect();
+        let subs: Vec<SocketAddr> = lock(&self.osc_subs).iter().filter(|s| s.expires > now).map(|s| s.addr).collect();
         let mut peers = lock(&self.osc_peers);
         peers.retain(|_, seen| now.duration_since(*seen) < Duration::from_secs(15));
         for (addr, seen) in peers.iter() {
             out.push(ClientInfo {
                 kind: ClientKind::Osc,
                 addr: *addr,
-                subscribed: subs.iter().any(|(to, from)| to == addr || from == addr),
+                subscribed: subs.contains(addr),
                 seconds: now.duration_since(*seen).as_secs(),
             });
         }
@@ -724,11 +724,12 @@ impl Shared {
     pub fn handle_osc(&self, sock: &UdpSocket, data: &[u8], from: SocketAddr) {
         let Some(msg) = osc::decode(data) else { return };
         self.osc_messages.fetch_add(1, Ordering::Relaxed);
-        lock(&self.osc_peers).insert(from, Instant::now());
-        let (mut replies, port, effect) = osc::handle(self, &msg, Origin::Osc(from));
-        let dest = port.map_or(from, |p| SocketAddr::new(from.ip(), p));
+        // The client is where its replies go, not the port it sent from.
+        let dest = osc::reply_port(&msg.addr).0.map_or(from, |p| SocketAddr::new(from.ip(), p));
+        lock(&self.osc_peers).insert(dest, Instant::now());
+        let (mut replies, _, effect) = osc::handle(self, &msg, Origin::Osc(dest));
         if let Some(Effect::Subscribe(format)) = effect {
-            self.subscribe_osc(dest, from, format);
+            self.subscribe_osc(dest, format);
         }
         // `/?` reports the address the client reached us on.
         for r in replies.iter_mut() {
@@ -741,6 +742,88 @@ impl Shared {
             }
         }
     }
+}
+
+/// Binds a UDP server port so that no other program can share it. Windows
+/// otherwise lets another program bind the same port on one address
+/// (192.168.1.10:2223 over Sidecar's 0.0.0.0:2223), and that program then
+/// receives everything sent to that address: a WING tool running on the same
+/// computer, bound to the console's port, takes the requests and the replies
+/// meant for itself, and Sidecar never sees the client. Bound exclusively,
+/// the tool's own bind fails instead.
+///
+/// std can't set an option before binding, so the socket is made with
+/// WinSock itself (ws2_32, which std links anyway).
+#[cfg(windows)]
+pub fn bind_udp(addr: SocketAddr) -> std::io::Result<UdpSocket> {
+    use std::os::windows::io::FromRawSocket;
+    #[link(name = "ws2_32")]
+    extern "system" {
+        fn WSAStartup(version: u16, data: *mut u8) -> i32;
+        fn WSASocketW(af: i32, ty: i32, protocol: i32, info: *const u8, group: u32, flags: u32) -> usize;
+        fn setsockopt(s: usize, level: i32, name: i32, value: *const u8, len: i32) -> i32;
+        fn bind(s: usize, name: *const u8, len: i32) -> i32;
+        fn closesocket(s: usize) -> i32;
+    }
+    const AF_INET: u16 = 2;
+    const AF_INET6: u16 = 23;
+    const SOCK_DGRAM: i32 = 2;
+    const IPPROTO_UDP: i32 = 17;
+    // As std makes its sockets: not inherited by child processes (the plugin
+    // host would keep the port open).
+    const WSA_FLAG_OVERLAPPED: u32 = 0x01;
+    const WSA_FLAG_NO_HANDLE_INHERIT: u32 = 0x80;
+    const SOL_SOCKET: i32 = 0xffff;
+    const SO_EXCLUSIVEADDRUSE: i32 = !4; // ~SO_REUSEADDR
+    const INVALID_SOCKET: usize = !0;
+
+    // SOCKADDR_IN / SOCKADDR_IN6: the family in host order, the rest in network order
+    // (but the IPv6 scope id).
+    let mut name = [0u8; 28];
+    let len = match addr {
+        SocketAddr::V4(a) => {
+            name[..2].copy_from_slice(&AF_INET.to_le_bytes());
+            name[2..4].copy_from_slice(&a.port().to_be_bytes());
+            name[4..8].copy_from_slice(&a.ip().octets());
+            16
+        }
+        SocketAddr::V6(a) => {
+            name[..2].copy_from_slice(&AF_INET6.to_le_bytes());
+            name[2..4].copy_from_slice(&a.port().to_be_bytes());
+            name[4..8].copy_from_slice(&a.flowinfo().to_be_bytes());
+            name[8..24].copy_from_slice(&a.ip().octets());
+            name[24..28].copy_from_slice(&a.scope_id().to_le_bytes());
+            28
+        }
+    };
+    let af = i32::from(if addr.is_ipv4() { AF_INET } else { AF_INET6 });
+    // SAFETY: WinSock calls with buffers of the sizes given; the socket is
+    // closed on failure and owned by the UdpSocket otherwise.
+    unsafe {
+        // Counted, so it doesn't matter that std may have started WinSock already.
+        let mut data = [0u64; 64]; // WSADATA (408 bytes on 64-bit)
+        if WSAStartup(0x0202, data.as_mut_ptr().cast()) != 0 {
+            return Err(std::io::Error::last_os_error());
+        }
+        let s = WSASocketW(af, SOCK_DGRAM, IPPROTO_UDP, std::ptr::null(), 0, WSA_FLAG_OVERLAPPED | WSA_FLAG_NO_HANDLE_INHERIT);
+        if s == INVALID_SOCKET {
+            return Err(std::io::Error::last_os_error());
+        }
+        let on: i32 = 1;
+        if setsockopt(s, SOL_SOCKET, SO_EXCLUSIVEADDRUSE, (&on as *const i32).cast(), 4) != 0 || bind(s, name.as_ptr(), len) != 0
+        {
+            let e = std::io::Error::last_os_error();
+            closesocket(s);
+            return Err(e);
+        }
+        Ok(UdpSocket::from_raw_socket(s as _))
+    }
+}
+
+/// Elsewhere sockets are bound as before.
+#[cfg(not(windows))]
+pub fn bind_udp(addr: SocketAddr) -> std::io::Result<UdpSocket> {
+    UdpSocket::bind(addr)
 }
 
 /// The local address a reply to `peer` leaves from.
@@ -774,7 +857,7 @@ impl WingServer {
         let mut threads = Vec::new();
 
         if config.discovery {
-            match UdpSocket::bind((config.bind, config.discovery_port)) {
+            match bind_udp(SocketAddr::new(config.bind, config.discovery_port)) {
                 Ok(sock) => {
                     status.discovery = sock.local_addr().ok();
                     let sh = shared.clone();
@@ -784,7 +867,7 @@ impl WingServer {
             }
         }
         if config.osc {
-            match UdpSocket::bind((config.bind, config.osc_port)) {
+            match bind_udp(SocketAddr::new(config.bind, config.osc_port)) {
                 Ok(sock) => {
                     status.osc = sock.local_addr().ok();
                     if let Ok(tx) = sock.try_clone() {
@@ -1127,7 +1210,7 @@ mod tests {
         sh.osc_events_on.store(true, Ordering::Relaxed);
         let addrs: Vec<SocketAddr> = (0..3).map(|i| SocketAddr::from(([127, 0, 0, 1], 9000 + i))).collect();
         for (addr, format) in addrs.iter().zip([SubFormat::Triplet, SubFormat::Native, SubFormat::Triplet]) {
-            sh.subscribe_osc(*addr, *addr, format);
+            sh.subscribe_osc(*addr, format);
         }
         let c = sh.console();
         let changes: Vec<(Node, Value)> = (1..=10)
